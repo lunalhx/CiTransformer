@@ -1,0 +1,36 @@
+# =========================================================
+# CiTransformer 项目依赖
+# Python 版本要求: 3.10.x (推荐 3.10.12 或 3.10.15)
+# 安装命令: pip install -r requirements.txt
+# =========================================================
+
+# --- 深度学习核心 ---
+# PyTorch: 因果掩码 iTransformer 的核心框架
+# 注意: 如果你的电脑有 NVIDIA GPU，请先安装 CUDA 版 PyTorch (详见 README)
+# 无 GPU 版 (CPU only，速度慢但能跑):
+torch==2.2.2
+torchvision==0.17.2
+
+# --- 因果发现算法 ---
+# tigramite: 用于跑 PCMCI 因果发现，生成因果掩码矩阵
+tigramite==5.2.3
+
+# --- 数据处理 ---
+numpy==1.26.4
+pandas==2.2.1
+scikit-learn==1.4.1.post1
+
+# --- 可视化 ---
+matplotlib==3.8.3
+seaborn==0.13.2
+
+# --- 统计检验 ---
+statsmodels==0.14.1    # 用于 ADF 平稳性检验
+
+# --- 工具库 ---
+tqdm==4.66.2           # 训练进度条
+einops==0.7.0          # Tensor 维度变换 (iTransformer 可能用到)
+reformer-pytorch==1.4.4  # 可选，部分 Transformer 变体用到
+
+# --- 文件与路径 ---
+pathlib2==2.3.7
