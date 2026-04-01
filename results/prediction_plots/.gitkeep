@@ -1,0 +1,4 @@
+# 此文件仅用于保持目录存在
+# 模型预测结果的可视化图片会保存在这里:
+#   - pred_vs_true_{date}.png   : 预测值 vs 真实值对比图
+#   - loss_curve_epoch{N}.png   : 训练/验证损失曲线
