@@ -12,8 +12,8 @@ torch==2.2.2
 torchvision==0.17.2
 
 # --- 因果发现算法 ---
-# tigramite: 用于跑 PCMCI 因果发现，生成因果掩码矩阵
-tigramite==5.2.3
+# tigramite: 5.2.10.1 与当前 numpy 1.26.4 兼容
+tigramite==5.2.10.1
 
 # --- 数据处理 ---
 numpy==1.26.4
@@ -31,7 +31,3 @@ statsmodels==0.14.1    # 用于 ADF 平稳性检验
 # --- 工具库 ---
 tqdm==4.66.2           # 训练进度条
 einops==0.7.0          # Tensor 维度变换 (iTransformer 可能用到)
-reformer-pytorch==1.4.4  # 可选，部分 Transformer 变体用到
-
-# --- 文件与路径 ---
-pathlib2==2.3.7

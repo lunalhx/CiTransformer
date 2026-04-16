@@ -2,6 +2,7 @@
 # Python 虚拟环境
 # ============================
 .venv/
+.venv_*
 venv/
 env/
 __pycache__/
