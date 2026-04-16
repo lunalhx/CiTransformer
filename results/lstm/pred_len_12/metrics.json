@@ -1,0 +1,405 @@
+{
+  "config": {
+    "data_dir": "data/processed",
+    "time_col": null,
+    "target_col": "Active_Pow",
+    "feature_cols": [
+      "Active_Pow",
+      "Radiation_Global_Tilted",
+      "Radiation_Diffuse_Tilted",
+      "Weather_T",
+      "Weather_R",
+      "solar_elevation",
+      "sin_time_of_day",
+      "cos_time_of_day",
+      "sin_day_of_year",
+      "cos_day_of_year",
+      "day_night_label"
+    ],
+    "seq_len": 96,
+    "pred_len": 12,
+    "sampling_freq_minutes": null,
+    "hidden_size": 128,
+    "num_layers": 2,
+    "dropout": 0.1,
+    "epochs": 30,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-05,
+    "grad_clip": 1.0,
+    "patience": 8,
+    "min_delta": 1e-05,
+    "num_workers": 0,
+    "log_interval": 200,
+    "seed": 42,
+    "device": "auto",
+    "results_dir": "results/lstm/pred_len_12",
+    "checkpoint_path": "checkpoints/lstm/pred_len_12/best_model.pth",
+    "max_train_batches": null,
+    "max_eval_batches": null
+  },
+  "device": "cuda",
+  "best_epoch": 4,
+  "best_validation_loss": 0.052153653109826795,
+  "expected_delta_minutes": 5.0,
+  "dataset_summary": {
+    "train": {
+      "rows": 831033,
+      "expected_delta_minutes": 5.0,
+      "total_segments": 471,
+      "usable_segments": 466,
+      "dropped_segments": 5,
+      "samples": 781074,
+      "max_segment_length": 69327,
+      "min_segment_length": 2,
+      "max_usable_segment_length": 69327,
+      "min_usable_segment_length": 136
+    },
+    "validation": {
+      "rows": 118718,
+      "expected_delta_minutes": 5.0,
+      "total_segments": 25,
+      "usable_segments": 25,
+      "dropped_segments": 0,
+      "samples": 116043,
+      "max_segment_length": 35045,
+      "min_segment_length": 171,
+      "max_usable_segment_length": 35045,
+      "min_usable_segment_length": 171
+    },
+    "calibration": {
+      "rows": 118720,
+      "expected_delta_minutes": 5.0,
+      "total_segments": 187,
+      "usable_segments": 71,
+      "dropped_segments": 116,
+      "samples": 109301,
+      "max_segment_length": 17565,
+      "min_segment_length": 1,
+      "max_usable_segment_length": 17565,
+      "min_usable_segment_length": 117
+    },
+    "test": {
+      "rows": 118719,
+      "expected_delta_minutes": 5.0,
+      "total_segments": 75,
+      "usable_segments": 63,
+      "dropped_segments": 12,
+      "samples": 111522,
+      "max_segment_length": 10175,
+      "min_segment_length": 1,
+      "max_usable_segment_length": 10175,
+      "min_usable_segment_length": 111
+    }
+  },
+  "raw_split_rows": {
+    "train": 831033,
+    "validation": 118718,
+    "calibration": 118720,
+    "test": 118719
+  },
+  "test_metrics": {
+    "all_timestamps": {
+      "count": 1338264,
+      "mae": 0.2594647873373953,
+      "mse": 0.23548574858365356,
+      "rmse": 0.48526873851882685,
+      "smape": 124.80449240277574,
+      "mape_nonzero": 98.34716033338977,
+      "nonzero_target_count": 604782
+    },
+    "daytime_only": {
+      "count": 606687,
+      "mae": 0.5347524095116224,
+      "mse": 0.5147683983885355,
+      "rmse": 0.7174736220855339,
+      "smape": 34.1714232087216,
+      "mape_nonzero": 98.34716033338977,
+      "nonzero_target_count": 604782
+    },
+    "per_horizon_all": {
+      "t+1": {
+        "count": 111522,
+        "mae": 0.14494326546322125,
+        "mse": 0.06272712585334707,
+        "rmse": 0.2504538397656284,
+        "smape": 118.34013379455448,
+        "mape_nonzero": 42.15465893270549,
+        "nonzero_target_count": 50481
+      },
+      "t+2": {
+        "count": 111522,
+        "mae": 0.18177622028029922,
+        "mse": 0.10510454086818179,
+        "rmse": 0.3241983048508764,
+        "smape": 120.75275745088578,
+        "mape_nonzero": 58.898073386924565,
+        "nonzero_target_count": 50466
+      },
+      "t+3": {
+        "count": 111522,
+        "mae": 0.20138818581038448,
+        "mse": 0.14117606993327034,
+        "rmse": 0.3757340414884847,
+        "smape": 122.25719863358835,
+        "mape_nonzero": 68.23093241100413,
+        "nonzero_target_count": 50452
+      },
+      "t+4": {
+        "count": 111522,
+        "mae": 0.22544544076295303,
+        "mse": 0.1728930243191735,
+        "rmse": 0.4158040696279601,
+        "smape": 123.50853844722576,
+        "mape_nonzero": 77.47469974510848,
+        "nonzero_target_count": 50437
+      },
+      "t+5": {
+        "count": 111522,
+        "mae": 0.24953864823048033,
+        "mse": 0.1994639437114661,
+        "rmse": 0.44661386421769994,
+        "smape": 124.4486762907592,
+        "mape_nonzero": 88.41162473038165,
+        "nonzero_target_count": 50422
+      },
+      "t+6": {
+        "count": 111522,
+        "mae": 0.26004476568508045,
+        "mse": 0.22815225946715698,
+        "rmse": 0.47765286502559257,
+        "smape": 125.21423129399577,
+        "mape_nonzero": 93.6034864314651,
+        "nonzero_target_count": 50406
+      },
+      "t+7": {
+        "count": 111522,
+        "mae": 0.2754586375442216,
+        "mse": 0.25712064566812387,
+        "rmse": 0.5070706515547156,
+        "smape": 125.89998574911738,
+        "mape_nonzero": 100.30654571990827,
+        "nonzero_target_count": 50392
+      },
+      "t+8": {
+        "count": 111522,
+        "mae": 0.29646225269522647,
+        "mse": 0.28441041446553256,
+        "rmse": 0.5333014292738513,
+        "smape": 126.55317331461471,
+        "mape_nonzero": 110.91233660634285,
+        "nonzero_target_count": 50377
+      },
+      "t+9": {
+        "count": 111522,
+        "mae": 0.301068387622393,
+        "mse": 0.3076150648422065,
+        "rmse": 0.5546305660908047,
+        "smape": 127.01798354850578,
+        "mape_nonzero": 119.05074097012785,
+        "nonzero_target_count": 50361
+      },
+      "t+10": {
+        "count": 111522,
+        "mae": 0.31109029547452544,
+        "mse": 0.3318322773823078,
+        "rmse": 0.5760488498229189,
+        "smape": 127.39919756915681,
+        "mape_nonzero": 127.68784406349576,
+        "nonzero_target_count": 50345
+      },
+      "t+11": {
+        "count": 111522,
+        "mae": 0.3308671339195735,
+        "mse": 0.3582480744624013,
+        "rmse": 0.5985382815346078,
+        "smape": 128.00483655280667,
+        "mape_nonzero": 144.64373360864124,
+        "nonzero_target_count": 50329
+      },
+      "t+12": {
+        "count": 111522,
+        "mae": 0.3354942145603838,
+        "mse": 0.3770855420306762,
+        "rmse": 0.6140729126338957,
+        "smape": 128.25719618809813,
+        "mape_nonzero": 149.19057363874833,
+        "nonzero_target_count": 50314
+      }
+    },
+    "per_horizon_daytime": {
+      "t+1": {
+        "count": 50642,
+        "mae": 0.26064858615391634,
+        "mse": 0.13412881066920504,
+        "rmse": 0.36623600405913814,
+        "smape": 20.180703506827243,
+        "mape_nonzero": 42.15465893270549,
+        "nonzero_target_count": 50481
+      },
+      "t+2": {
+        "count": 50626,
+        "mae": 0.3549269722884197,
+        "mse": 0.228145477703109,
+        "rmse": 0.47764576592189006,
+        "smape": 25.44323578934378,
+        "mape_nonzero": 58.898073386924565,
+        "nonzero_target_count": 50466
+      },
+      "t+3": {
+        "count": 50611,
+        "mae": 0.4202651560046304,
+        "mse": 0.30816852828460073,
+        "rmse": 0.555129289701598,
+        "smape": 28.789937720187897,
+        "mape_nonzero": 68.23093241100413,
+        "nonzero_target_count": 50452
+      },
+      "t+4": {
+        "count": 50596,
+        "mae": 0.4693379302426867,
+        "mse": 0.37776681772722664,
+        "rmse": 0.6146273812052524,
+        "smape": 31.48083592068454,
+        "mape_nonzero": 77.47469974510848,
+        "nonzero_target_count": 50437
+      },
+      "t+5": {
+        "count": 50581,
+        "mae": 0.5063911701123708,
+        "mse": 0.435499328776751,
+        "rmse": 0.6599237295148213,
+        "smape": 33.43745217358059,
+        "mape_nonzero": 88.41162473038165,
+        "nonzero_target_count": 50422
+      },
+      "t+6": {
+        "count": 50565,
+        "mae": 0.544155985711279,
+        "mse": 0.499225106259093,
+        "rmse": 0.7065586361082093,
+        "smape": 35.10142416300213,
+        "mape_nonzero": 93.6034864314651,
+        "nonzero_target_count": 50406
+      },
+      "t+7": {
+        "count": 50550,
+        "mae": 0.577731376999,
+        "mse": 0.5630721892899823,
+        "rmse": 0.7503813625683825,
+        "smape": 36.560863163396185,
+        "mape_nonzero": 100.30654571990827,
+        "nonzero_target_count": 50392
+      },
+      "t+8": {
+        "count": 50535,
+        "mae": 0.6072239673457243,
+        "mse": 0.6220333565051596,
+        "rmse": 0.7886909131625389,
+        "smape": 37.928508981289085,
+        "mape_nonzero": 110.91233660634285,
+        "nonzero_target_count": 50377
+      },
+      "t+9": {
+        "count": 50519,
+        "mae": 0.633392937420188,
+        "mse": 0.6741092451487067,
+        "rmse": 0.821041561157964,
+        "smape": 38.93450734884274,
+        "mape_nonzero": 119.05074097012785,
+        "nonzero_target_count": 50361
+      },
+      "t+10": {
+        "count": 50503,
+        "mae": 0.6581855559576867,
+        "mse": 0.7278589876263333,
+        "rmse": 0.8531465217805986,
+        "smape": 39.75920224663021,
+        "mape_nonzero": 127.68784406349576,
+        "nonzero_target_count": 50345
+      },
+      "t+11": {
+        "count": 50487,
+        "mae": 0.6843723776843554,
+        "mse": 0.7843235164764802,
+        "rmse": 0.8856204133128822,
+        "smape": 40.98423946878154,
+        "mape_nonzero": 144.64373360864124,
+        "nonzero_target_count": 50329
+      },
+      "t+12": {
+        "count": 50472,
+        "mae": 0.7020197353169348,
+        "mse": 0.825583514894325,
+        "rmse": 0.9086162638288646,
+        "smape": 41.532950876028416,
+        "mape_nonzero": 149.19057363874833,
+        "nonzero_target_count": 50314
+      }
+    },
+    "mape_note": "MAPE excludes targets with abs(y_true) <= 1e-6 to avoid night-time zero division."
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.06039460983119429,
+      "validation_loss": 0.055405084789903615
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.050378327115541806,
+      "validation_loss": 0.054834578821970674
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.0488641729321937,
+      "validation_loss": 0.053730456855419634
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.04813629584365077,
+      "validation_loss": 0.052153653109826795
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.047676293393356724,
+      "validation_loss": 0.05356151368586014
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.047266068303572266,
+      "validation_loss": 0.05237228514820731
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.046868910967749894,
+      "validation_loss": 0.05452553945169644
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.046503348058208036,
+      "validation_loss": 0.0538895701287109
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.04597368398371722,
+      "validation_loss": 0.05358560189724695
+    },
+    {
+      "epoch": 10,
+      "train_loss": 0.0455938504099393,
+      "validation_loss": 0.05469143411618562
+    },
+    {
+      "epoch": 11,
+      "train_loss": 0.045131802239861143,
+      "validation_loss": 0.05649346440141772
+    },
+    {
+      "epoch": 12,
+      "train_loss": 0.04473534648771782,
+      "validation_loss": 0.05824488146902985
+    }
+  ],
+  "checkpoint_path": "/home/lunalhx/projects/CiTransformer/checkpoints/lstm/pred_len_12/best_model.pth"
+}
