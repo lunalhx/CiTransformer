@@ -1,7 +1,0 @@
-# 此文件仅用于保持目录存在
-# 预处理后的数据文件会保存在这里，包括:
-#   - *_cleaned.csv       : 清洗并通过 ADF 检验的平稳数据
-#   - mask_Spring.npy     : PCMCI 生成的春季因果掩码矩阵
-#   - mask_Summer.npy     : 夏季因果掩码矩阵
-#   - mask_Autumn.npy     : 秋季因果掩码矩阵
-#   - mask_Winter.npy     : 冬季因果掩码矩阵
