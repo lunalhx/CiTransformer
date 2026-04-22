@@ -1,0 +1,841 @@
+{
+  "config": {
+    "data_dir": "data/processed",
+    "time_col": null,
+    "target_col": "Active_Pow",
+    "feature_cols": [
+      "Active_Pow",
+      "Radiation_Global_Tilted",
+      "Radiation_Diffuse_Tilted",
+      "Weather_T",
+      "Weather_R",
+      "solar_elevation",
+      "sin_time_of_day",
+      "cos_time_of_day",
+      "sin_day_of_year",
+      "cos_day_of_year",
+      "day_night_label"
+    ],
+    "seq_len": 96,
+    "pred_len": 12,
+    "sampling_freq_minutes": null,
+    "d_model": 128,
+    "n_heads": 4,
+    "e_layers": 3,
+    "d_ff": 256,
+    "factor": 5,
+    "activation": "gelu",
+    "disable_norm": false,
+    "output_attention": false,
+    "dropout": 0.0,
+    "epochs": 30,
+    "batch_size": 256,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-05,
+    "grad_clip": 1.0,
+    "patience": 8,
+    "min_delta": 1e-05,
+    "num_workers": 0,
+    "log_interval": 0,
+    "progress_mininterval": 15.0,
+    "seed": 42,
+    "device": "auto",
+    "results_dir": "results/audit/itransformer_compare/tuned12",
+    "checkpoint_path": "checkpoints/tuning/itransformer/standard/pred_len_12/s2_deeper3_pl12_lr0p001_bs256_dm128_ff256_el3_do0p0_wd1e-05_actgelu_nh4_fac5/best_model.pth",
+    "report_split": "test",
+    "experiment_name": "s2_deeper3_pl12_lr0p001_bs256_dm128_ff256_el3_do0p0_wd1e-05_actgelu_nh4_fac5",
+    "tuning_stage": "s2",
+    "max_train_batches": null,
+    "max_eval_batches": null,
+    "tuning_only": false,
+    "eval_checkpoint_path": "checkpoints/tuning/itransformer/standard/pred_len_12/s2_deeper3_pl12_lr0p001_bs256_dm128_ff256_el3_do0p0_wd1e-05_actgelu_nh4_fac5/best_model.pth"
+  },
+  "experiment_name": "s2_deeper3_pl12_lr0p001_bs256_dm128_ff256_el3_do0p0_wd1e-05_actgelu_nh4_fac5",
+  "tuning_stage": "s2",
+  "device": "cpu",
+  "best_epoch": 15,
+  "best_validation_loss": 0.061305840463491315,
+  "expected_delta_minutes": 5.0,
+  "dataset_summary": {
+    "train": {
+      "rows": 831033,
+      "expected_delta_minutes": 5.0,
+      "total_segments": 471,
+      "usable_segments": 466,
+      "dropped_segments": 5,
+      "samples": 781074,
+      "max_segment_length": 69327,
+      "min_segment_length": 2,
+      "max_usable_segment_length": 69327,
+      "min_usable_segment_length": 136
+    },
+    "validation": {
+      "rows": 118718,
+      "expected_delta_minutes": 5.0,
+      "total_segments": 25,
+      "usable_segments": 25,
+      "dropped_segments": 0,
+      "samples": 116043,
+      "max_segment_length": 35045,
+      "min_segment_length": 171,
+      "max_usable_segment_length": 35045,
+      "min_usable_segment_length": 171
+    },
+    "calibration": {
+      "rows": 118720,
+      "expected_delta_minutes": 5.0,
+      "total_segments": 187,
+      "usable_segments": 71,
+      "dropped_segments": 116,
+      "samples": 109301,
+      "max_segment_length": 17565,
+      "min_segment_length": 1,
+      "max_usable_segment_length": 17565,
+      "min_usable_segment_length": 117
+    },
+    "test": {
+      "rows": 118719,
+      "expected_delta_minutes": 5.0,
+      "total_segments": 75,
+      "usable_segments": 63,
+      "dropped_segments": 12,
+      "samples": 111522,
+      "max_segment_length": 10175,
+      "min_segment_length": 1,
+      "max_usable_segment_length": 10175,
+      "min_usable_segment_length": 111
+    }
+  },
+  "raw_split_rows": {
+    "train": 831033,
+    "validation": 118718,
+    "calibration": 118720,
+    "test": 118719
+  },
+  "report_split": "test",
+  "validation_metrics": {
+    "all_timestamps": {
+      "count": 1392516,
+      "mae": 0.32489247411345906,
+      "mse": 0.47239972844052386,
+      "rmse": 0.6873134135461957,
+      "smape": 117.93295519986928,
+      "mape_nonzero": 63.48235877174585,
+      "nonzero_target_count": 646379
+    },
+    "daytime_only": {
+      "count": 648035,
+      "mae": 0.6257544193220401,
+      "mse": 0.963330589246117,
+      "rmse": 0.9814940597100509,
+      "smape": 23.823728424529527,
+      "mape_nonzero": 63.48235877174585,
+      "nonzero_target_count": 646379
+    },
+    "per_horizon_all": {
+      "t+1": {
+        "count": 116043,
+        "mae": 0.20723910991358963,
+        "mse": 0.21778345050894685,
+        "rmse": 0.4666727445533399,
+        "smape": 113.7618885400459,
+        "mape_nonzero": 22.32062647632763,
+        "nonzero_target_count": 53848
+      },
+      "t+2": {
+        "count": 116043,
+        "mae": 0.2524943029418861,
+        "mse": 0.31136489905405035,
+        "rmse": 0.5580008056034063,
+        "smape": 115.32444137192729,
+        "mape_nonzero": 32.96999411089963,
+        "nonzero_target_count": 53850
+      },
+      "t+3": {
+        "count": 116043,
+        "mae": 0.2805702230036554,
+        "mse": 0.3619807544399176,
+        "rmse": 0.6016483644454771,
+        "smape": 116.33346419557122,
+        "mape_nonzero": 39.22206082534446,
+        "nonzero_target_count": 53853
+      },
+      "t+4": {
+        "count": 116043,
+        "mae": 0.29338033449669376,
+        "mse": 0.3976921947477611,
+        "rmse": 0.6306284125757109,
+        "smape": 116.99573672228038,
+        "mape_nonzero": 44.927297286419574,
+        "nonzero_target_count": 53856
+      },
+      "t+5": {
+        "count": 116043,
+        "mae": 0.3070945913166982,
+        "mse": 0.4328373340868059,
+        "rmse": 0.657903742265391,
+        "smape": 117.58961242194736,
+        "mape_nonzero": 60.83162114480568,
+        "nonzero_target_count": 53859
+      },
+      "t+6": {
+        "count": 116043,
+        "mae": 0.32369346972516677,
+        "mse": 0.4677771618861771,
+        "rmse": 0.6839423673718255,
+        "smape": 118.19331606090746,
+        "mape_nonzero": 71.36670851072886,
+        "nonzero_target_count": 53862
+      },
+      "t+7": {
+        "count": 116043,
+        "mae": 0.33810904894792637,
+        "mse": 0.5008002839112888,
+        "rmse": 0.7076724411133225,
+        "smape": 118.63619663682961,
+        "mape_nonzero": 77.23503187114989,
+        "nonzero_target_count": 53865
+      },
+      "t+8": {
+        "count": 116043,
+        "mae": 0.35241592223795365,
+        "mse": 0.5321216041595888,
+        "rmse": 0.7294666573323203,
+        "smape": 118.98603685253268,
+        "mape_nonzero": 80.04117833769216,
+        "nonzero_target_count": 53868
+      },
+      "t+9": {
+        "count": 116043,
+        "mae": 0.36633365911823185,
+        "mse": 0.5635657818439631,
+        "rmse": 0.7507101849874978,
+        "smape": 119.30151797944876,
+        "mape_nonzero": 86.38372579403512,
+        "nonzero_target_count": 53872
+      },
+      "t+10": {
+        "count": 116043,
+        "mae": 0.3784841713296445,
+        "mse": 0.5942419561718959,
+        "rmse": 0.7708709075921181,
+        "smape": 119.6287334848741,
+        "mape_nonzero": 85.33563454718966,
+        "nonzero_target_count": 53877
+      },
+      "t+11": {
+        "count": 116043,
+        "mae": 0.39275356037918296,
+        "mse": 0.626231423472761,
+        "rmse": 0.7913478523839949,
+        "smape": 119.97730861073296,
+        "mape_nonzero": 82.37954714818633,
+        "nonzero_target_count": 53882
+      },
+      "t+12": {
+        "count": 116043,
+        "mae": 0.4061412959508819,
+        "mse": 0.6623998970031312,
+        "rmse": 0.8138795346997805,
+        "smape": 120.46720952133359,
+        "mape_nonzero": 78.72407440528072,
+        "nonzero_target_count": 53887
+      }
+    },
+    "per_horizon_daytime": {
+      "t+1": {
+        "count": 53986,
+        "mae": 0.39782055752350376,
+        "mse": 0.45823608409989713,
+        "rmse": 0.6769313732572136,
+        "smape": 14.890645090711926,
+        "mape_nonzero": 22.32062647632763,
+        "nonzero_target_count": 53848
+      },
+      "t+2": {
+        "count": 53988,
+        "mae": 0.4913310650176592,
+        "mse": 0.6561244960816522,
+        "rmse": 0.8100151208969202,
+        "smape": 18.23531092419363,
+        "mape_nonzero": 32.96999411089963,
+        "nonzero_target_count": 53850
+      },
+      "t+3": {
+        "count": 53991,
+        "mae": 0.5398975591918799,
+        "mse": 0.7597591300577403,
+        "rmse": 0.8716416293739878,
+        "smape": 20.379539046629834,
+        "mape_nonzero": 39.22206082534446,
+        "nonzero_target_count": 53853
+      },
+      "t+4": {
+        "count": 53994,
+        "mae": 0.5686797504525708,
+        "mse": 0.8320727578428577,
+        "rmse": 0.9121802222383786,
+        "smape": 21.793506731865875,
+        "mape_nonzero": 44.927297286419574,
+        "nonzero_target_count": 53856
+      },
+      "t+5": {
+        "count": 53997,
+        "mae": 0.598294552224366,
+        "mse": 0.9008900857645128,
+        "rmse": 0.9491522985087866,
+        "smape": 23.078915278691923,
+        "mape_nonzero": 60.83162114480568,
+        "nonzero_target_count": 53859
+      },
+      "t+6": {
+        "count": 54000,
+        "mae": 0.6304792802830296,
+        "mse": 0.9668897695414149,
+        "rmse": 0.9833055321421795,
+        "smape": 24.36991675444321,
+        "mape_nonzero": 71.36670851072886,
+        "nonzero_target_count": 53862
+      },
+      "t+7": {
+        "count": 54003,
+        "mae": 0.6554203660694939,
+        "mse": 1.0275271877349605,
+        "rmse": 1.0136701572676194,
+        "smape": 25.31029379933125,
+        "mape_nonzero": 77.23503187114989,
+        "nonzero_target_count": 53865
+      },
+      "t+8": {
+        "count": 54006,
+        "mae": 0.6806066497099058,
+        "mse": 1.084035238898999,
+        "rmse": 1.041170129661334,
+        "smape": 26.04994647952323,
+        "mape_nonzero": 80.04117833769216,
+        "nonzero_target_count": 53868
+      },
+      "t+9": {
+        "count": 54010,
+        "mae": 0.7047602185953327,
+        "mse": 1.1399974950552967,
+        "rmse": 1.0677066521546528,
+        "smape": 26.746285678124202,
+        "mape_nonzero": 86.38372579403512,
+        "nonzero_target_count": 53872
+      },
+      "t+10": {
+        "count": 54015,
+        "mae": 0.7258984269929071,
+        "mse": 1.1917567373968023,
+        "rmse": 1.0916761137795414,
+        "smape": 27.47261658601556,
+        "mape_nonzero": 85.33563454718966,
+        "nonzero_target_count": 53877
+      },
+      "t+11": {
+        "count": 54020,
+        "mae": 0.7469839790585718,
+        "mse": 1.243024919429747,
+        "rmse": 1.1149102741609958,
+        "smape": 28.24351144156687,
+        "mape_nonzero": 82.37954714818633,
+        "nonzero_target_count": 53882
+      },
+      "t+12": {
+        "count": 54025,
+        "mae": 0.768608257112994,
+        "mse": 1.299029816196324,
+        "rmse": 1.1397498919483713,
+        "smape": 29.30379567415197,
+        "mape_nonzero": 78.72407440528072,
+        "nonzero_target_count": 53887
+      }
+    },
+    "mape_note": "MAPE excludes targets with abs(y_true) <= 1e-6 to avoid night-time zero division."
+  },
+  "reported_metrics": {
+    "all_timestamps": {
+      "count": 1338264,
+      "mae": 0.17687394833986808,
+      "mse": 0.14474685301531467,
+      "rmse": 0.3804561118122755,
+      "smape": 121.26354507505452,
+      "mape_nonzero": 97.87832060398317,
+      "nonzero_target_count": 604782
+    },
+    "daytime_only": {
+      "count": 606687,
+      "mae": 0.3304366252845692,
+      "mse": 0.2599651946673293,
+      "rmse": 0.5098678207803757,
+      "smape": 26.520755305716094,
+      "mape_nonzero": 97.87832060398317,
+      "nonzero_target_count": 604782
+    },
+    "per_horizon_all": {
+      "t+1": {
+        "count": 111522,
+        "mae": 0.09104808103242441,
+        "mse": 0.043860839034420354,
+        "rmse": 0.20942979500161946,
+        "smape": 115.1841489729504,
+        "mape_nonzero": 36.4476975016441,
+        "nonzero_target_count": 50481
+      },
+      "t+2": {
+        "count": 111522,
+        "mae": 0.11253949243340994,
+        "mse": 0.0627043838732585,
+        "rmse": 0.2504084341096731,
+        "smape": 116.76699761624573,
+        "mape_nonzero": 44.357247960093815,
+        "nonzero_target_count": 50466
+      },
+      "t+3": {
+        "count": 111522,
+        "mae": 0.13057416279234316,
+        "mse": 0.07560247421610834,
+        "rmse": 0.2749590409790308,
+        "smape": 118.29656830192725,
+        "mape_nonzero": 51.86620795926976,
+        "nonzero_target_count": 50452
+      },
+      "t+4": {
+        "count": 111522,
+        "mae": 0.14137197390327239,
+        "mse": 0.08801925501402692,
+        "rmse": 0.29668039202823454,
+        "smape": 119.48953296873974,
+        "mape_nonzero": 58.57788312832971,
+        "nonzero_target_count": 50437
+      },
+      "t+5": {
+        "count": 111522,
+        "mae": 0.1531193401827804,
+        "mse": 0.10239910282094224,
+        "rmse": 0.31999859815465165,
+        "smape": 120.5357939702679,
+        "mape_nonzero": 71.43599583018667,
+        "nonzero_target_count": 50422
+      },
+      "t+6": {
+        "count": 111522,
+        "mae": 0.16847809468666025,
+        "mse": 0.12123975888827004,
+        "rmse": 0.34819500123963587,
+        "smape": 121.63552185416755,
+        "mape_nonzero": 86.89651324252637,
+        "nonzero_target_count": 50406
+      },
+      "t+7": {
+        "count": 111522,
+        "mae": 0.18394683879516083,
+        "mse": 0.1422113191721516,
+        "rmse": 0.3771091608170658,
+        "smape": 122.47508259033171,
+        "mape_nonzero": 101.64333666700887,
+        "nonzero_target_count": 50392
+      },
+      "t+8": {
+        "count": 111522,
+        "mae": 0.19890391534997737,
+        "mse": 0.16496920652689676,
+        "rmse": 0.4061640143179806,
+        "smape": 123.16942695996704,
+        "mape_nonzero": 120.8566877090362,
+        "nonzero_target_count": 50377
+      },
+      "t+9": {
+        "count": 111522,
+        "mae": 0.2136408039455478,
+        "mse": 0.19088359928838808,
+        "rmse": 0.43690227658869907,
+        "smape": 123.78734075821028,
+        "mape_nonzero": 138.87938048671194,
+        "nonzero_target_count": 50361
+      },
+      "t+10": {
+        "count": 111522,
+        "mae": 0.22882617257709223,
+        "mse": 0.21964738808671147,
+        "rmse": 0.4686655396833775,
+        "smape": 124.34732726612982,
+        "mape_nonzero": 153.10116988023825,
+        "nonzero_target_count": 50345
+      },
+      "t+11": {
+        "count": 111522,
+        "mae": 0.24377684313014686,
+        "mse": 0.24806718886722576,
+        "rmse": 0.4980634385971588,
+        "smape": 124.64789940188933,
+        "mape_nonzero": 152.92657064939644,
+        "nonzero_target_count": 50329
+      },
+      "t+12": {
+        "count": 111522,
+        "mae": 0.2562616612496016,
+        "mse": 0.27735772039537526,
+        "rmse": 0.5266476245036859,
+        "smape": 124.82690023982705,
+        "mape_nonzero": 158.0925135003993,
+        "nonzero_target_count": 50314
+      }
+    },
+    "per_horizon_daytime": {
+      "t+1": {
+        "count": 50642,
+        "mae": 0.17631055775885893,
+        "mse": 0.09481162970272296,
+        "rmse": 0.3079149715468914,
+        "smape": 13.473197459735706,
+        "mape_nonzero": 36.4476975016441,
+        "nonzero_target_count": 50481
+      },
+      "t+2": {
+        "count": 50626,
+        "mae": 0.21936391869711336,
+        "mse": 0.13474311343620798,
+        "rmse": 0.3670737166240699,
+        "smape": 16.915546275784422,
+        "mape_nonzero": 44.357247960093815,
+        "nonzero_target_count": 50466
+      },
+      "t+3": {
+        "count": 50611,
+        "mae": 0.2482956573977074,
+        "mse": 0.15910447019977564,
+        "rmse": 0.39887901699610073,
+        "smape": 20.206631425301378,
+        "mape_nonzero": 51.86620795926976,
+        "nonzero_target_count": 50452
+      },
+      "t+4": {
+        "count": 50596,
+        "mae": 0.26895365405365285,
+        "mse": 0.17935985122669443,
+        "rmse": 0.4235089741985339,
+        "smape": 22.77530716742604,
+        "mape_nonzero": 58.57788312832971,
+        "nonzero_target_count": 50437
+      },
+      "t+5": {
+        "count": 50581,
+        "mae": 0.2911481532197528,
+        "mse": 0.2004538720371848,
+        "rmse": 0.447720752296769,
+        "smape": 25.021470475115095,
+        "mape_nonzero": 71.43599583018667,
+        "nonzero_target_count": 50422
+      },
+      "t+6": {
+        "count": 50565,
+        "mae": 0.3191507976387631,
+        "mse": 0.2282360217648037,
+        "rmse": 0.47774053812169187,
+        "smape": 27.3330790884445,
+        "mape_nonzero": 86.89651324252637,
+        "nonzero_target_count": 50406
+      },
+      "t+7": {
+        "count": 50550,
+        "mae": 0.3457010757347888,
+        "mse": 0.26002131083566504,
+        "rmse": 0.5099228479247278,
+        "smape": 29.131393178470795,
+        "mape_nonzero": 101.64333666700887,
+        "nonzero_target_count": 50392
+      },
+      "t+8": {
+        "count": 50535,
+        "mae": 0.3718866942879916,
+        "mse": 0.29409534825257994,
+        "rmse": 0.5423055856734097,
+        "smape": 30.600463703409964,
+        "mape_nonzero": 120.8566877090362,
+        "nonzero_target_count": 50377
+      },
+      "t+9": {
+        "count": 50519,
+        "mae": 0.39752275070145154,
+        "mse": 0.3323905331171104,
+        "rmse": 0.576533202094303,
+        "smape": 31.91159485020789,
+        "mape_nonzero": 138.87938048671194,
+        "nonzero_target_count": 50361
+      },
+      "t+10": {
+        "count": 50503,
+        "mae": 0.42157472654527745,
+        "mse": 0.3727350337227973,
+        "rmse": 0.6105202975518482,
+        "smape": 33.116188142619166,
+        "mape_nonzero": 153.10116988023825,
+        "nonzero_target_count": 50345
+      },
+      "t+11": {
+        "count": 50487,
+        "mae": 0.44412003907105574,
+        "mse": 0.41367747639371855,
+        "rmse": 0.643177639842772,
+        "smape": 33.75269381338952,
+        "mape_nonzero": 152.92657064939644,
+        "nonzero_target_count": 50329
+      },
+      "t+12": {
+        "count": 50472,
+        "mae": 0.46232485948938906,
+        "mse": 0.45132973412767513,
+        "rmse": 0.671810787445152,
+        "smape": 34.09273725912808,
+        "mape_nonzero": 158.0925135003993,
+        "nonzero_target_count": 50314
+      }
+    },
+    "mape_note": "MAPE excludes targets with abs(y_true) <= 1e-6 to avoid night-time zero division."
+  },
+  "test_metrics": {
+    "all_timestamps": {
+      "count": 1338264,
+      "mae": 0.17687394833986808,
+      "mse": 0.14474685301531467,
+      "rmse": 0.3804561118122755,
+      "smape": 121.26354507505452,
+      "mape_nonzero": 97.87832060398317,
+      "nonzero_target_count": 604782
+    },
+    "daytime_only": {
+      "count": 606687,
+      "mae": 0.3304366252845692,
+      "mse": 0.2599651946673293,
+      "rmse": 0.5098678207803757,
+      "smape": 26.520755305716094,
+      "mape_nonzero": 97.87832060398317,
+      "nonzero_target_count": 604782
+    },
+    "per_horizon_all": {
+      "t+1": {
+        "count": 111522,
+        "mae": 0.09104808103242441,
+        "mse": 0.043860839034420354,
+        "rmse": 0.20942979500161946,
+        "smape": 115.1841489729504,
+        "mape_nonzero": 36.4476975016441,
+        "nonzero_target_count": 50481
+      },
+      "t+2": {
+        "count": 111522,
+        "mae": 0.11253949243340994,
+        "mse": 0.0627043838732585,
+        "rmse": 0.2504084341096731,
+        "smape": 116.76699761624573,
+        "mape_nonzero": 44.357247960093815,
+        "nonzero_target_count": 50466
+      },
+      "t+3": {
+        "count": 111522,
+        "mae": 0.13057416279234316,
+        "mse": 0.07560247421610834,
+        "rmse": 0.2749590409790308,
+        "smape": 118.29656830192725,
+        "mape_nonzero": 51.86620795926976,
+        "nonzero_target_count": 50452
+      },
+      "t+4": {
+        "count": 111522,
+        "mae": 0.14137197390327239,
+        "mse": 0.08801925501402692,
+        "rmse": 0.29668039202823454,
+        "smape": 119.48953296873974,
+        "mape_nonzero": 58.57788312832971,
+        "nonzero_target_count": 50437
+      },
+      "t+5": {
+        "count": 111522,
+        "mae": 0.1531193401827804,
+        "mse": 0.10239910282094224,
+        "rmse": 0.31999859815465165,
+        "smape": 120.5357939702679,
+        "mape_nonzero": 71.43599583018667,
+        "nonzero_target_count": 50422
+      },
+      "t+6": {
+        "count": 111522,
+        "mae": 0.16847809468666025,
+        "mse": 0.12123975888827004,
+        "rmse": 0.34819500123963587,
+        "smape": 121.63552185416755,
+        "mape_nonzero": 86.89651324252637,
+        "nonzero_target_count": 50406
+      },
+      "t+7": {
+        "count": 111522,
+        "mae": 0.18394683879516083,
+        "mse": 0.1422113191721516,
+        "rmse": 0.3771091608170658,
+        "smape": 122.47508259033171,
+        "mape_nonzero": 101.64333666700887,
+        "nonzero_target_count": 50392
+      },
+      "t+8": {
+        "count": 111522,
+        "mae": 0.19890391534997737,
+        "mse": 0.16496920652689676,
+        "rmse": 0.4061640143179806,
+        "smape": 123.16942695996704,
+        "mape_nonzero": 120.8566877090362,
+        "nonzero_target_count": 50377
+      },
+      "t+9": {
+        "count": 111522,
+        "mae": 0.2136408039455478,
+        "mse": 0.19088359928838808,
+        "rmse": 0.43690227658869907,
+        "smape": 123.78734075821028,
+        "mape_nonzero": 138.87938048671194,
+        "nonzero_target_count": 50361
+      },
+      "t+10": {
+        "count": 111522,
+        "mae": 0.22882617257709223,
+        "mse": 0.21964738808671147,
+        "rmse": 0.4686655396833775,
+        "smape": 124.34732726612982,
+        "mape_nonzero": 153.10116988023825,
+        "nonzero_target_count": 50345
+      },
+      "t+11": {
+        "count": 111522,
+        "mae": 0.24377684313014686,
+        "mse": 0.24806718886722576,
+        "rmse": 0.4980634385971588,
+        "smape": 124.64789940188933,
+        "mape_nonzero": 152.92657064939644,
+        "nonzero_target_count": 50329
+      },
+      "t+12": {
+        "count": 111522,
+        "mae": 0.2562616612496016,
+        "mse": 0.27735772039537526,
+        "rmse": 0.5266476245036859,
+        "smape": 124.82690023982705,
+        "mape_nonzero": 158.0925135003993,
+        "nonzero_target_count": 50314
+      }
+    },
+    "per_horizon_daytime": {
+      "t+1": {
+        "count": 50642,
+        "mae": 0.17631055775885893,
+        "mse": 0.09481162970272296,
+        "rmse": 0.3079149715468914,
+        "smape": 13.473197459735706,
+        "mape_nonzero": 36.4476975016441,
+        "nonzero_target_count": 50481
+      },
+      "t+2": {
+        "count": 50626,
+        "mae": 0.21936391869711336,
+        "mse": 0.13474311343620798,
+        "rmse": 0.3670737166240699,
+        "smape": 16.915546275784422,
+        "mape_nonzero": 44.357247960093815,
+        "nonzero_target_count": 50466
+      },
+      "t+3": {
+        "count": 50611,
+        "mae": 0.2482956573977074,
+        "mse": 0.15910447019977564,
+        "rmse": 0.39887901699610073,
+        "smape": 20.206631425301378,
+        "mape_nonzero": 51.86620795926976,
+        "nonzero_target_count": 50452
+      },
+      "t+4": {
+        "count": 50596,
+        "mae": 0.26895365405365285,
+        "mse": 0.17935985122669443,
+        "rmse": 0.4235089741985339,
+        "smape": 22.77530716742604,
+        "mape_nonzero": 58.57788312832971,
+        "nonzero_target_count": 50437
+      },
+      "t+5": {
+        "count": 50581,
+        "mae": 0.2911481532197528,
+        "mse": 0.2004538720371848,
+        "rmse": 0.447720752296769,
+        "smape": 25.021470475115095,
+        "mape_nonzero": 71.43599583018667,
+        "nonzero_target_count": 50422
+      },
+      "t+6": {
+        "count": 50565,
+        "mae": 0.3191507976387631,
+        "mse": 0.2282360217648037,
+        "rmse": 0.47774053812169187,
+        "smape": 27.3330790884445,
+        "mape_nonzero": 86.89651324252637,
+        "nonzero_target_count": 50406
+      },
+      "t+7": {
+        "count": 50550,
+        "mae": 0.3457010757347888,
+        "mse": 0.26002131083566504,
+        "rmse": 0.5099228479247278,
+        "smape": 29.131393178470795,
+        "mape_nonzero": 101.64333666700887,
+        "nonzero_target_count": 50392
+      },
+      "t+8": {
+        "count": 50535,
+        "mae": 0.3718866942879916,
+        "mse": 0.29409534825257994,
+        "rmse": 0.5423055856734097,
+        "smape": 30.600463703409964,
+        "mape_nonzero": 120.8566877090362,
+        "nonzero_target_count": 50377
+      },
+      "t+9": {
+        "count": 50519,
+        "mae": 0.39752275070145154,
+        "mse": 0.3323905331171104,
+        "rmse": 0.576533202094303,
+        "smape": 31.91159485020789,
+        "mape_nonzero": 138.87938048671194,
+        "nonzero_target_count": 50361
+      },
+      "t+10": {
+        "count": 50503,
+        "mae": 0.42157472654527745,
+        "mse": 0.3727350337227973,
+        "rmse": 0.6105202975518482,
+        "smape": 33.116188142619166,
+        "mape_nonzero": 153.10116988023825,
+        "nonzero_target_count": 50345
+      },
+      "t+11": {
+        "count": 50487,
+        "mae": 0.44412003907105574,
+        "mse": 0.41367747639371855,
+        "rmse": 0.643177639842772,
+        "smape": 33.75269381338952,
+        "mape_nonzero": 152.92657064939644,
+        "nonzero_target_count": 50329
+      },
+      "t+12": {
+        "count": 50472,
+        "mae": 0.46232485948938906,
+        "mse": 0.45132973412767513,
+        "rmse": 0.671810787445152,
+        "smape": 34.09273725912808,
+        "mape_nonzero": 158.0925135003993,
+        "nonzero_target_count": 50314
+      }
+    },
+    "mape_note": "MAPE excludes targets with abs(y_true) <= 1e-6 to avoid night-time zero division."
+  },
+  "history": [],
+  "checkpoint_path": "/home/lunalhx/projects/CiTransformer/checkpoints/tuning/itransformer/standard/pred_len_12/s2_deeper3_pl12_lr0p001_bs256_dm128_ff256_el3_do0p0_wd1e-05_actgelu_nh4_fac5/best_model.pth"
+}
