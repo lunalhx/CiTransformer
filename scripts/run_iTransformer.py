@@ -273,6 +273,8 @@ def evaluate_and_export(
     best_val_loss: float | None,
     history: list[dict[str, float | int]],
 ) -> None:
+    target_feature_index = get_target_feature_index(list(args.feature_cols), args.target_col)
+    trainable_parameter_count = int(sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
     validation_loader = create_data_loader(datasets["validation"], args.batch_size, False, args.num_workers, device)
 
     validation_prediction_dict = collect_predictions(
@@ -327,12 +329,17 @@ def evaluate_and_export(
         "experiment_name": args.experiment_name,
         "tuning_stage": args.tuning_stage,
         "device": str(device),
+        "baseline_type": "itransformer",
+        "baseline_definition": "Vanilla iTransformer backbone with Active_Pow extracted from the multivariate forecast output.",
         "best_epoch": best_epoch,
         "best_validation_loss": best_val_loss,
         "expected_delta_minutes": float(expected_delta / pd.Timedelta(minutes=1)),
         "dataset_summary": {split_name: dataset.summary() for split_name, dataset in datasets.items()},
         "raw_split_rows": {split_name: int(len(df)) for split_name, df in raw_frames.items()},
+        "target_feature_index": target_feature_index,
+        "trainable_parameter_count": trainable_parameter_count,
         "report_split": args.report_split,
+        "calibration_usage": "loaded_but_unused",
         "validation_metrics": validation_metrics,
         "reported_metrics": reported_metrics,
         "test_metrics": test_metrics,

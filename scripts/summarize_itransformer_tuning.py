@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
         "--pred_lens",
         type=int,
         nargs="+",
-        default=[12, 24],
+        default=[12, 24, 48],
         help="Prediction lengths to include in the shared-config ranking.",
     )
     parser.add_argument(
