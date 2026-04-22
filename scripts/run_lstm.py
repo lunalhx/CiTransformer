@@ -5,6 +5,7 @@ import json
 import math
 import random
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -89,8 +90,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log_interval",
         type=int,
-        default=200,
-        help="Print one training progress log every N batches. Set <=0 to disable batch logs.",
+        default=0,
+        help="Optional extra training heartbeat every N batches. Set <=0 to rely on the progress bar only.",
+    )
+    parser.add_argument(
+        "--progress_mininterval",
+        type=float,
+        default=15.0,
+        help="Minimum seconds between progress bar refreshes and extra heartbeat logs.",
     )
 
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
@@ -212,6 +219,10 @@ def format_metric_for_console(value: float | None) -> str:
     return f"{value:.6f}"
 
 
+def resolve_progress_mininterval(progress_mininterval: float) -> float:
+    return max(float(progress_mininterval), 1.0)
+
+
 def evaluate_prediction_arrays(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -301,13 +312,22 @@ def train_one_epoch(
     grad_clip: float,
     epoch: int,
     log_interval: int,
+    progress_mininterval: float,
     max_batches: int | None = None,
 ) -> float:
     model.train()
     total_loss = 0.0
     total_samples = 0
+    refresh_interval = resolve_progress_mininterval(progress_mininterval)
+    last_heartbeat_time = time.monotonic()
 
-    progress = tqdm(loader, desc=f"Train Epoch {epoch:03d}", leave=True, dynamic_ncols=True)
+    progress = tqdm(
+        loader,
+        desc=f"Train Epoch {epoch:03d}",
+        leave=True,
+        dynamic_ncols=True,
+        mininterval=refresh_interval,
+    )
     for batch_idx, batch in enumerate(progress):
         if max_batches is not None and batch_idx >= max_batches:
             break
@@ -327,14 +347,17 @@ def train_one_epoch(
         batch_size = x.size(0)
         total_loss += float(loss.item()) * batch_size
         total_samples += batch_size
-        progress.set_postfix(loss=f"{loss.item():.6f}")
+        progress.set_postfix(loss=f"{loss.item():.6f}", refresh=False)
 
         if log_interval > 0 and (batch_idx + 1) % log_interval == 0:
-            avg_loss = total_loss / max(total_samples, 1)
-            log(
-                f"[Epoch {epoch:03d}] train batch {batch_idx + 1}/{len(loader)} "
-                f"| batch_loss={loss.item():.6f} avg_loss={avg_loss:.6f}"
-            )
+            now = time.monotonic()
+            if now - last_heartbeat_time >= refresh_interval:
+                avg_loss = total_loss / max(total_samples, 1)
+                log(
+                    f"[Epoch {epoch:03d}] train batch {batch_idx + 1}/{len(loader)} "
+                    f"| batch_loss={loss.item():.6f} avg_loss={avg_loss:.6f}"
+                )
+                last_heartbeat_time = now
 
     return total_loss / max(total_samples, 1)
 
@@ -347,6 +370,7 @@ def evaluate_loss(
     device: torch.device,
     split_name: str,
     epoch: int | None = None,
+    progress_mininterval: float = 15.0,
     max_batches: int | None = None,
 ) -> float:
     model.eval()
@@ -357,7 +381,13 @@ def evaluate_loss(
     if epoch is not None:
         description = f"{split_name.title()} Epoch {epoch:03d}"
 
-    progress = tqdm(loader, desc=description, leave=True, dynamic_ncols=True)
+    progress = tqdm(
+        loader,
+        desc=description,
+        leave=True,
+        dynamic_ncols=True,
+        mininterval=resolve_progress_mininterval(progress_mininterval),
+    )
     for batch_idx, batch in enumerate(progress):
         if max_batches is not None and batch_idx >= max_batches:
             break
@@ -369,7 +399,7 @@ def evaluate_loss(
         batch_size = x.size(0)
         total_loss += float(loss.item()) * batch_size
         total_samples += batch_size
-        progress.set_postfix(loss=f"{loss.item():.6f}")
+        progress.set_postfix(loss=f"{loss.item():.6f}", refresh=False)
 
     return total_loss / max(total_samples, 1)
 
@@ -380,6 +410,8 @@ def collect_predictions(
     loader: DataLoader,
     target_scaler: Any,
     device: torch.device,
+    split_name: str = "test",
+    progress_mininterval: float = 15.0,
     max_batches: int | None = None,
 ) -> dict[str, np.ndarray]:
     model.eval()
@@ -391,7 +423,13 @@ def collect_predictions(
     target_time_batches: list[np.ndarray] = []
     target_day_batches: list[np.ndarray] = []
 
-    progress = tqdm(loader, desc="Test Predict", leave=True, dynamic_ncols=True)
+    progress = tqdm(
+        loader,
+        desc=f"{split_name.title()} Predict",
+        leave=True,
+        dynamic_ncols=True,
+        mininterval=resolve_progress_mininterval(progress_mininterval),
+    )
     for batch_idx, batch in enumerate(progress):
         if max_batches is not None and batch_idx >= max_batches:
             break
@@ -480,13 +518,16 @@ def save_checkpoint(
     )
 
 
-def prepare_datasets(args: argparse.Namespace) -> tuple[dict[str, ContinuousSegmentTimeSeriesDataset], dict[str, pd.DataFrame], Any, pd.Timedelta]:
+def prepare_datasets(
+    args: argparse.Namespace,
+    include_test: bool = True,
+) -> tuple[dict[str, ContinuousSegmentTimeSeriesDataset], dict[str, pd.DataFrame], Any, pd.Timedelta]:
     split_dir = resolve_split_dir(args.data_dir)
 
     train_df = load_split_dataframe(split_dir / "train.csv", time_col=args.time_col)
     validation_df = load_split_dataframe(split_dir / "validation.csv", time_col=args.time_col)
     calibration_df = load_split_dataframe(split_dir / "calibration.csv", time_col=args.time_col)
-    test_df = load_split_dataframe(split_dir / "test.csv", time_col=args.time_col)
+    test_df = load_split_dataframe(split_dir / "test.csv", time_col=args.time_col) if include_test else None
 
     feature_cols = list(args.feature_cols)
     scalers = fit_split_scalers(train_df, feature_cols, args.target_col)
@@ -528,7 +569,9 @@ def prepare_datasets(args: argparse.Namespace) -> tuple[dict[str, ContinuousSegm
             target_scaler=scalers.target_scaler,
             expected_delta=expected_delta,
         ),
-        "test": ContinuousSegmentTimeSeriesDataset(
+    }
+    if test_df is not None:
+        datasets["test"] = ContinuousSegmentTimeSeriesDataset(
             df=test_df,
             feature_cols=feature_cols,
             target_col=args.target_col,
@@ -537,15 +580,15 @@ def prepare_datasets(args: argparse.Namespace) -> tuple[dict[str, ContinuousSegm
             feature_scaler=scalers.feature_scaler,
             target_scaler=scalers.target_scaler,
             expected_delta=expected_delta,
-        ),
-    }
+        )
 
     raw_frames = {
         "train": train_df,
         "validation": validation_df,
         "calibration": calibration_df,
-        "test": test_df,
     }
+    if test_df is not None:
+        raw_frames["test"] = test_df
     return datasets, raw_frames, scalers, expected_delta
 
 
@@ -615,6 +658,7 @@ def main() -> None:
             grad_clip=args.grad_clip,
             epoch=epoch,
             log_interval=args.log_interval,
+            progress_mininterval=args.progress_mininterval,
             max_batches=args.max_train_batches,
         )
         val_loss = evaluate_loss(
@@ -624,6 +668,7 @@ def main() -> None:
             device=device,
             split_name="validation",
             epoch=epoch,
+            progress_mininterval=args.progress_mininterval,
             max_batches=args.max_eval_batches,
         )
 
@@ -666,6 +711,7 @@ def main() -> None:
         loader=test_loader,
         target_scaler=scalers.target_scaler,
         device=device,
+        progress_mininterval=args.progress_mininterval,
         max_batches=args.max_eval_batches,
     )
     test_metrics = evaluate_prediction_arrays(

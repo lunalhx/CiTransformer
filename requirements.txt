@@ -30,4 +30,4 @@ statsmodels==0.14.1    # 用于 ADF 平稳性检验
 
 # --- 工具库 ---
 tqdm==4.66.2           # 训练进度条
-einops==0.7.0          # Tensor 维度变换 (iTransformer 可能用到)
+# vanilla iTransformer 当前只走 FullAttention 路径，不需要额外安装 einops / reformer_pytorch
