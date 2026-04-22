@@ -6,11 +6,11 @@
 
 - `scripts/run_itransformer_experiments.sh`
   - 用于跑 vanilla iTransformer baseline
-  - 默认会分别运行 `pred_len=1/12/24`
+  - 默认会分别运行 `pred_len=1/12/24/48`
   - 结果默认写入 `results/itransformer/pred_len_x/`
 - `scripts/tune_itransformer.sh`
   - 用于做正式的 validation-only 小规模调参
-  - 默认主目标是 `pred_len=12/24`
+  - 默认主目标是 `pred_len=12/24/48`
   - 会额外补一个 `pred_len=1` 参考 run
   - 结果写入 `results/tuning/itransformer/<plan>/`
 
@@ -117,7 +117,7 @@
 普通 baseline 批量脚本 `scripts/run_itransformer_experiments.sh` 的默认超参数如下：
 
 - `SEQ_LEN=96`
-- `PRED_LENS=1 12 24`
+- `PRED_LENS=1 12 24 48`
 - `BATCH_SIZE=256`
 - `D_MODEL=128`
 - `N_HEADS=4`
@@ -211,8 +211,8 @@
 
 优先级如下：
 
-1. `pred_len=12/24` 的 `daytime_only RMSE`
-2. `pred_len=12/24` 的 `daytime_only MAE`
+1. `pred_len=12/24/48` 的 `daytime_only RMSE`
+2. `pred_len=12/24/48` 的 `daytime_only MAE`
 3. `all timestamps` 的 RMSE / MAE
 4. `pred_len=1` 只作为补充参考
 
@@ -222,17 +222,17 @@
 
 - Stage 1: 4 个配置
 - Stage 2: 2 个配置
-- 主目标 `pred_len=12/24` 共 12 次 validation-only run
+- 主目标 `pred_len=12/24/48` 共 18 次 validation-only run
 - 再补 1 次 `pred_len=1` 参考
-- 总计 13 次
+- 总计 19 次
 
 `standard` 计划：
 
 - Stage 1: 5 个配置
 - Stage 2: 3 个配置
-- 主目标 `pred_len=12/24` 共 16 次 validation-only run
+- 主目标 `pred_len=12/24/48` 共 24 次 validation-only run
 - 再补 1 次 `pred_len=1` 参考
-- 总计 17 次
+- 总计 25 次
 
 ### 7.4 一个非常重要的约束
 
@@ -285,6 +285,7 @@
 - `results/itransformer/pred_len_1/`
 - `results/itransformer/pred_len_12/`
 - `results/itransformer/pred_len_24/`
+- `results/itransformer/pred_len_48/`
 
 含义：
 
@@ -316,6 +317,7 @@
 - `results/itransformer_tuned/pred_len_1/`
 - `results/itransformer_tuned/pred_len_12/`
 - `results/itransformer_tuned/pred_len_24/`
+- `results/itransformer_tuned/pred_len_48/`
 
 这一步不重新训练，而是：
 
@@ -347,7 +349,12 @@
 
 ## 10. 当前已经保存的默认 baseline 结果
 
-当前仓库里 `results/itransformer/` 下保存的 vanilla iTransformer 默认 test 结果如下：
+当前仓库里 `results/itransformer/` 下保存的 vanilla iTransformer 默认 test 结果如下。
+
+注意：
+
+- 当前仓库里已经保存的历史结果仍然是 `pred_len=1/12/24`
+- `pred_len=48` 已经补进默认实验协议，但还需要单独跑出正式结果
 
 | pred_len | best_epoch | all MAE | all RMSE | daytime MAE | daytime RMSE |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -416,7 +423,7 @@ cd /home/lunalhx/projects/CiTransformer
 PYTHON_BIN=./.venv/bin/python \
 DEVICE=cuda \
 MODE=export_tuned_best \
-PRED_LENS="1 12 24" \
+PRED_LENS="1 12 24 48" \
 RUN_PRED_LEN1_REF=1 \
 RESULTS_BASE_DIR=results/itransformer_tuned \
 bash scripts/run_itransformer_experiments.sh
@@ -437,7 +444,7 @@ bash scripts/run_itransformer_experiments.sh
 3. Samples are constructed only within timestamp-continuous segments, and sliding windows never cross temporal discontinuities.
 4. The multivariate iTransformer backbone predicts all encoder variables, after which the `Active_Pow` channel is extracted as the forecasting target.
 5. All final metrics are computed after inverse transformation on the original power scale.
-6. Hyperparameter selection is performed only on validation results, with daytime RMSE and daytime MAE for `pred_len=12/24` treated as the primary objectives.
+6. Hyperparameter selection is performed only on validation results, with daytime RMSE and daytime MAE for `pred_len=12/24/48` treated as the primary objectives.
 
 ## 14. 我的实际建议
 

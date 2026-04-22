@@ -2,17 +2,19 @@
 
 ## 1. 当前这个实验在做什么
 
-这个仓库里的 Persistence baseline 是通过 `scripts/run_persistence_experiments.sh` 统一调用 `scripts/run_persistence.py` 来运行的，当前会分别跑 3 组预测步长：
+这个仓库里的 Persistence baseline 是通过 `scripts/run_persistence_experiments.sh` 统一调用 `scripts/run_persistence.py` 来运行的，当前会分别跑 4 组预测步长：
 
 - `pred_len=1`
 - `pred_len=12`
 - `pred_len=24`
+- `pred_len=48`
 
 每个 `pred_len` 都会单独评估一次，并把结果分别写到：
 
 - `results/persistence/pred_len_1/`
 - `results/persistence/pred_len_12/`
 - `results/persistence/pred_len_24/`
+- `results/persistence/pred_len_48/`
 
 模型本身不是神经网络训练基线，而是一个标准、朴素、无参数的 persistence / naive baseline：
 
@@ -70,7 +72,7 @@
 
 - `DATA_DIR=data/processed`
 - `SEQ_LEN=96`
-- `PRED_LENS=1 12 24`
+- `PRED_LENS=1 12 24 48`
 - `BATCH_SIZE=256`
 - `NUM_WORKERS=0`
 - `SEED=42`
@@ -113,7 +115,12 @@
 
 ## 5. 当前已经得到的结果
 
-当前仓库里已经保存下来的 Persistence baseline 结果如下：
+当前仓库里已经保存下来的 Persistence baseline 结果如下。
+
+注意：
+
+- 当前仓库里已经保存的历史结果仍然是 `pred_len=1/12/24`
+- `pred_len=48` 已经补进默认实验协议，但还需要单独跑出正式结果
 
 | pred_len | all MAE | all RMSE | daytime MAE | daytime RMSE |
 | --- | ---: | ---: | ---: | ---: |

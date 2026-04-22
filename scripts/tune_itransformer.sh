@@ -68,7 +68,7 @@ fi
 
 DATA_DIR="${DATA_DIR:-data/processed}"
 SEQ_LEN="${SEQ_LEN:-96}"
-MAIN_PRED_LENS="${MAIN_PRED_LENS:-12 24}"
+MAIN_PRED_LENS="${MAIN_PRED_LENS:-12 24 48}"
 RUN_PRED_LEN1_REF="${RUN_PRED_LEN1_REF:-1}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 
@@ -301,7 +301,7 @@ best_config_tsv() {
 echo "======================================================================"
 echo "iTransformer tuning plan -> ${PLAN}"
 echo "Validation-only tuning targets pred_len -> ${MAIN_PRED_LENS}"
-echo "Primary objective -> daytime RMSE / MAE on validation for pred_len=12 and 24"
+echo "Primary objective -> daytime RMSE / MAE on validation for pred_len=12, 24, and 48"
 echo "Results root -> ${PROJECT_ROOT}/${TUNING_RESULTS_ROOT}"
 echo "======================================================================"
 

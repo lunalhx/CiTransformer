@@ -134,6 +134,7 @@ def evaluate_split(
         loader=loader,
         target_scaler=target_scaler,
         device=device,
+        split_name=split_name,
         max_batches=max_batches,
     )
     metrics = evaluate_prediction_arrays(
@@ -226,6 +227,8 @@ def main() -> None:
 
     metrics_payload = {
         "config": vars(args),
+        "experiment_name": None,
+        "tuning_stage": None,
         "device": str(device),
         "baseline_type": "persistence",
         "baseline_definition": "Repeat the last observed Active_Pow in the input window for every future step.",
@@ -236,8 +239,10 @@ def main() -> None:
         "raw_split_rows": {split_name: int(len(df)) for split_name, df in raw_frames.items()},
         "target_feature_index": target_feature_index,
         "trainable_parameter_count": int(sum(parameter.numel() for parameter in model.parameters())),
+        "report_split": "test",
         "calibration_usage": "loaded_but_unused",
         "validation_metrics": validation_metrics,
+        "reported_metrics": test_metrics,
         "test_metrics": test_metrics,
         "history": [],
         "checkpoint_path": None,
@@ -251,7 +256,7 @@ def main() -> None:
         json.dump(metrics_payload, fp, ensure_ascii=False, indent=2)
 
     test_predictions_df.to_csv(predictions_path, index=False)
-    save_prediction_plot(test_predictions_df, plot_path)
+    save_prediction_plot(test_predictions_df, plot_path, split_name="test", model_label="Persistence Baseline")
 
     log("\nSaved outputs")
     log(f"- metrics: {metrics_path}")

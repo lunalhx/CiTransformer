@@ -263,7 +263,13 @@ def ns_to_datetime(ns_array: np.ndarray, timezone: Any) -> pd.DatetimeIndex:
     return pd.to_datetime(flat_array, utc=True).tz_convert(timezone)
 
 
-def save_prediction_plot(predictions_df: pd.DataFrame, output_path: Path, max_points: int = 4000) -> None:
+def save_prediction_plot(
+    predictions_df: pd.DataFrame,
+    output_path: Path,
+    split_name: str = "test",
+    model_label: str = "LSTM Baseline",
+    max_points: int = 4000,
+) -> None:
     plot_df = predictions_df.loc[:, ["target_start_time", "y_true_t+1", "y_pred_t+1"]].copy()
     plot_df["target_start_time"] = pd.to_datetime(plot_df["target_start_time"])
     plot_df = plot_df.sort_values("target_start_time")
@@ -275,7 +281,7 @@ def save_prediction_plot(predictions_df: pd.DataFrame, output_path: Path, max_po
     fig, ax = plt.subplots(figsize=(14, 6))
     ax.plot(plot_df["target_start_time"], plot_df["y_true_t+1"], label="Ground Truth", linewidth=1.2)
     ax.plot(plot_df["target_start_time"], plot_df["y_pred_t+1"], label="Prediction", linewidth=1.2)
-    ax.set_title("LSTM Baseline Prediction on Test Set (t+1)")
+    ax.set_title(f"{model_label} Prediction on {split_name.title()} Set (t+1)")
     ax.set_xlabel("Timestamp")
     ax.set_ylabel("Active_Pow")
     ax.legend()
@@ -632,6 +638,8 @@ def main() -> None:
         num_layers=args.num_layers,
         dropout=args.dropout,
     ).to(device)
+    target_feature_index = int(list(args.feature_cols).index(args.target_col)) if args.target_col in args.feature_cols else None
+    trainable_parameter_count = int(sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -705,12 +713,29 @@ def main() -> None:
 
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+
+    validation_prediction_dict = collect_predictions(
+        model=model,
+        loader=validation_loader,
+        target_scaler=scalers.target_scaler,
+        device=device,
+        split_name="validation",
+        progress_mininterval=args.progress_mininterval,
+        max_batches=args.max_eval_batches,
+    )
+    validation_metrics = evaluate_prediction_arrays(
+        y_true=validation_prediction_dict["y_true"],
+        y_pred=validation_prediction_dict["y_pred"],
+        day_night_label=validation_prediction_dict["target_day_night"],
+    )
 
     test_prediction_dict = collect_predictions(
         model=model,
         loader=test_loader,
         target_scaler=scalers.target_scaler,
         device=device,
+        split_name="test",
         progress_mininterval=args.progress_mininterval,
         max_batches=args.max_eval_batches,
     )
@@ -726,12 +751,22 @@ def main() -> None:
 
     metrics_payload = {
         "config": vars(args),
+        "experiment_name": None,
+        "tuning_stage": None,
         "device": str(device),
+        "baseline_type": "lstm",
+        "baseline_definition": "Sequence-to-vector LSTM that maps the last encoder hidden state to future Active_Pow horizons.",
         "best_epoch": best_epoch,
         "best_validation_loss": best_val_loss,
         "expected_delta_minutes": float(expected_delta / pd.Timedelta(minutes=1)),
         "dataset_summary": {split_name: dataset.summary() for split_name, dataset in datasets.items()},
         "raw_split_rows": {split_name: int(len(df)) for split_name, df in raw_frames.items()},
+        "target_feature_index": target_feature_index,
+        "report_split": "test",
+        "calibration_usage": "loaded_but_unused",
+        "trainable_parameter_count": trainable_parameter_count,
+        "validation_metrics": validation_metrics,
+        "reported_metrics": test_metrics,
         "test_metrics": test_metrics,
         "history": history,
         "checkpoint_path": str(checkpoint_path),
@@ -745,7 +780,7 @@ def main() -> None:
         json.dump(metrics_payload, fp, ensure_ascii=False, indent=2)
 
     predictions_df.to_csv(predictions_path, index=False)
-    save_prediction_plot(predictions_df, plot_path)
+    save_prediction_plot(predictions_df, plot_path, split_name="test", model_label="LSTM Baseline")
 
     log("\nSaved outputs")
     log(f"- metrics: {metrics_path}")
