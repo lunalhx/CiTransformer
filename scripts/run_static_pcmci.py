@@ -45,6 +45,15 @@ CI_TEST_NAME = "ParCorr(significance='analytic')"
 DEFAULT_TRAIN_PATH = "data/processed/splits/train.csv"
 DEFAULT_OUTPUT_DIR = "results/causal_graphs/static"
 FULL_FEATURE_COLUMNS = list(DEFAULT_FEATURE_COLUMNS)
+ACTIVE_POW_COLUMN = "Active_Pow"
+DETERMINISTIC_ROOT_COLUMNS = [
+    "solar_elevation",
+    "sin_time_of_day",
+    "cos_time_of_day",
+    "sin_day_of_year",
+    "cos_day_of_year",
+    "day_night_label",
+]
 
 
 @dataclass
@@ -66,6 +75,14 @@ class PreparedPCMCIData:
     kept_segment_lengths: list[int]
     segment_arrays: dict[int, np.ndarray] | np.ndarray
     tigramite_analysis_mode: str
+
+
+@dataclass(frozen=True)
+class ConstraintSpec:
+    profile: str
+    deterministic_root_columns: list[str]
+    forbidden_pair_reasons: dict[tuple[str, str], str]
+    description_lines: list[str]
 
 
 def parse_args() -> argparse.Namespace:
@@ -120,6 +137,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=30,
         help="Print a heartbeat during the long PCMCI step every N seconds. Set 0 to disable.",
+    )
+    parser.add_argument(
+        "--constraint_profile",
+        type=str,
+        default="pv_physical",
+        choices=["none", "pv_physical"],
+        help=(
+            "Post-PCMCI constraint profile used when aggregating adjacency and plotting the final graph. "
+            "`pv_physical` treats deterministic time features as exogenous roots and treats Active_Pow as a sink."
+        ),
     )
     return parser.parse_args()
 
@@ -239,6 +266,44 @@ def get_tigramite_verbosity(cli_verbosity: int) -> int:
     if cli_verbosity >= 2:
         return 1
     return 0
+
+
+def build_constraint_spec(
+    feature_columns: list[str],
+    profile: str,
+) -> ConstraintSpec:
+    if profile == "none":
+        return ConstraintSpec(
+            profile=profile,
+            deterministic_root_columns=[],
+            forbidden_pair_reasons={},
+            description_lines=["No post-PCMCI physical edge filtering is applied."],
+        )
+
+    deterministic_root_columns = [column for column in DETERMINISTIC_ROOT_COLUMNS if column in feature_columns]
+    forbidden_pair_reasons: dict[tuple[str, str], str] = {}
+
+    for target in deterministic_root_columns:
+        for source in feature_columns:
+            if source != target:
+                forbidden_pair_reasons[(source, target)] = "deterministic_time_feature_is_exogenous_root"
+
+    if ACTIVE_POW_COLUMN in feature_columns:
+        for target in feature_columns:
+            if target != ACTIVE_POW_COLUMN:
+                forbidden_pair_reasons[(ACTIVE_POW_COLUMN, target)] = "active_pow_is_treated_as_sink_only"
+
+    description_lines = [
+        "Deterministic time features are treated as exogenous roots, so cross-variable edges into them are removed.",
+        "Active_Pow is treated as an outcome variable, so outgoing edges from Active_Pow to other variables are removed.",
+        "Raw PCMCI significance is preserved in edges_lag_level.csv; only the final directed adjacency and plotted graph are filtered.",
+    ]
+    return ConstraintSpec(
+        profile=profile,
+        deterministic_root_columns=deterministic_root_columns,
+        forbidden_pair_reasons=forbidden_pair_reasons,
+        description_lines=description_lines,
+    )
 
 
 def prepare_pcmci_data(
@@ -455,6 +520,7 @@ def build_edge_table(
     graph_matrix_full: np.ndarray,
     alpha_level: float,
     excluded_constant_columns: list[str],
+    constraint_spec: ConstraintSpec,
 ) -> pd.DataFrame:
     excluded_set = set(excluded_constant_columns)
     rows: list[dict[str, Any]] = []
@@ -467,7 +533,10 @@ def build_edge_table(
                 test_stat = val_matrix_full[source_idx, target_idx, tau]
                 graph_symbol = str(graph_matrix_full[source_idx, target_idx, tau])
                 significant = bool(np.isfinite(p_value) and p_value <= alpha_level)
-                used_for_variable_adjacency = bool(significant and graph_symbol == "-->")
+                raw_directed_lag_edge = bool(significant and graph_symbol == "-->")
+                constraint_reason = constraint_spec.forbidden_pair_reasons.get((source, target), "")
+                constraint_allowed = constraint_reason == ""
+                used_for_variable_adjacency = bool(raw_directed_lag_edge and constraint_allowed)
                 rows.append(
                     {
                         "source": source,
@@ -479,6 +548,9 @@ def build_edge_table(
                         "p_value": float(p_value) if np.isfinite(p_value) else np.nan,
                         "significant": int(significant),
                         "graph_symbol": graph_symbol,
+                        "raw_directed_lag_edge": int(raw_directed_lag_edge),
+                        "constraint_allowed": int(constraint_allowed),
+                        "constraint_reason": constraint_reason,
                         "used_for_variable_adjacency": int(used_for_variable_adjacency),
                         "source_active_in_pcmci": int(source not in excluded_set),
                         "target_active_in_pcmci": int(target not in excluded_set),
@@ -501,6 +573,32 @@ def build_variable_level_adjacency(
     adjacency_for_mask = adjacency_raw.copy()
     np.fill_diagonal(adjacency_for_mask.values, 1)
     return adjacency_raw, adjacency_for_mask
+
+
+def build_plot_matrices_from_edge_table(
+    feature_columns: list[str],
+    edge_df: pd.DataFrame,
+    graph_matrix_full: np.ndarray,
+    val_matrix_full: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    graph_matrix_for_plot = np.full_like(graph_matrix_full, "", dtype=graph_matrix_full.dtype)
+    val_matrix_for_plot = np.full_like(val_matrix_full, np.nan, dtype=np.float64)
+    feature_index_lookup = {column: idx for idx, column in enumerate(feature_columns)}
+
+    used_edge_rows = edge_df.loc[
+        edge_df["used_for_variable_adjacency"] == 1,
+        ["source", "target", "lag", "test_stat"],
+    ]
+
+    for edge in used_edge_rows.itertuples(index=False):
+        source_idx = feature_index_lookup[edge.source]
+        target_idx = feature_index_lookup[edge.target]
+        tau = -int(edge.lag)
+        graph_matrix_for_plot[source_idx, target_idx, tau] = "-->"
+        if np.isfinite(edge.test_stat):
+            val_matrix_for_plot[source_idx, target_idx, tau] = float(edge.test_stat)
+
+    return graph_matrix_for_plot, val_matrix_for_plot
 
 
 def save_adjacency_heatmap(
@@ -555,10 +653,13 @@ def build_summary(
     output_dir: Path,
     prepared: PreparedPCMCIData,
     edge_df: pd.DataFrame,
+    constraint_spec: ConstraintSpec,
     graph_png_created: bool,
 ) -> dict[str, Any]:
     significant_count = int(edge_df["significant"].sum())
+    raw_directed_edge_count = int(edge_df["raw_directed_lag_edge"].sum())
     adjacency_edge_count = int(edge_df["used_for_variable_adjacency"].sum())
+    constrained_out_count = raw_directed_edge_count - adjacency_edge_count
     summary = {
         "train_path": str(train_path.resolve()),
         "output_dir": str(output_dir.resolve()),
@@ -588,8 +689,13 @@ def build_summary(
         "variable_level_aggregation_rule": (
             "A[i, j] = 1 if there exists at least one lag-level row with "
             "used_for_variable_adjacency = 1, where "
-            "used_for_variable_adjacency = significant and graph_symbol == '-->'"
+            "used_for_variable_adjacency = raw_directed_lag_edge and constraint_allowed, "
+            "and raw_directed_lag_edge = significant and graph_symbol == '-->'"
         ),
+        "constraint_profile": constraint_spec.profile,
+        "constraint_deterministic_root_columns": constraint_spec.deterministic_root_columns,
+        "constraint_forbidden_pair_count": int(len(constraint_spec.forbidden_pair_reasons)),
+        "constraint_description_lines": constraint_spec.description_lines,
         "method_caveat": (
             "ParCorr is a continuous-variable conditional independence test. "
             "`day_night_label` is therefore treated numerically in mode=all, "
@@ -599,9 +705,16 @@ def build_summary(
             "Significant but unoriented contemporaneous links such as 'o-o' are kept in "
             "edges_lag_level.csv but are not aggregated into the directed variable-level adjacency."
         ),
+        "note_on_causal_graph_png": (
+            "causal_graph.png shows only the constrained directed lagged edges that are used for "
+            "the variable-level adjacency. Raw PCMCI graph symbols remain available in "
+            "edges_lag_level.csv and pcmci_raw_results.npz."
+        ),
         "edge_rows_exported": int(len(edge_df)),
         "significant_lag_level_rows": significant_count,
-        "directed_rows_used_for_variable_adjacency": adjacency_edge_count,
+        "raw_directed_lag_level_rows": raw_directed_edge_count,
+        "constrained_directed_rows_used_for_variable_adjacency": adjacency_edge_count,
+        "directed_rows_removed_by_constraints": constrained_out_count,
         "causal_graph_png_created": graph_png_created,
         "generated_at_utc": pd.Timestamp.utcnow().isoformat(),
     }
@@ -615,6 +728,14 @@ def build_readme_markdown(summary: dict[str, Any]) -> str:
         if excluded_constant_columns
         else ""
     )
+    constraint_description_lines = summary["constraint_description_lines"]
+    constraint_text = "\n".join(f"- {line}" for line in constraint_description_lines)
+    deterministic_roots = summary["constraint_deterministic_root_columns"]
+    deterministic_root_text = (
+        f"- Deterministic root columns under the active constraint profile: {deterministic_roots}\n"
+        if deterministic_roots
+        else ""
+    )
 
     return f"""# Static PCMCI Summary
 
@@ -624,6 +745,7 @@ def build_readme_markdown(summary: dict[str, Any]) -> str:
 - Does **not** read validation / calibration / test.
 - Uses `mode = {summary["mode"]}`.
 - Uses Tigramite `PCMCI` with `{summary["ci_test"]}`.
+- Uses `constraint_profile = {summary["constraint_profile"]}` for the final adjacency and plotted graph.
 
 ## Time-Continuity Protocol
 
@@ -645,16 +767,22 @@ def build_readme_markdown(summary: dict[str, Any]) -> str:
 - Variable-level aggregation rule: `{summary["variable_level_aggregation_rule"]}`.
 - Method caveat: {summary["method_caveat"]}.
 - Contemporaneous links with unresolved direction such as `o-o` remain in `edges_lag_level.csv`, but they are excluded from the directed adjacency mask.
+- `causal_graph.png` is a filtered view that shows only the constrained directed lagged edges used in the final adjacency.
+
+## Constraint Profile
+
+{constraint_text}
+{deterministic_root_text}- Forbidden source-target pairs generated by the active profile: {summary["constraint_forbidden_pair_count"]}.
 
 ## Main Artifacts
 
 - `adjacency_variable_level_raw.csv`: directed binary adjacency without forcing diagonal values.
 - `adjacency_variable_level_for_mask.csv`: same adjacency, but the diagonal is forced to 1 for downstream masks.
-- `edges_lag_level.csv`: lag-level PCMCI export with p-values, test statistics, graph symbols, and the aggregation flag.
+- `edges_lag_level.csv`: lag-level PCMCI export with p-values, test statistics, graph symbols, raw directed-edge flags, constraint flags, and the final aggregation flag.
 - `pcmci_summary.json`: parameters, counts, segment statistics, and rules used in this run.
 - `adjacency_heatmap.png`: heatmap of the raw variable-level adjacency.
-- `causal_graph.png`: Tigramite graph visualization when rendering succeeds.
-- `pcmci_raw_results.npz`: raw expanded `p_matrix`, `val_matrix`, and `graph` arrays in full feature space.
+- `causal_graph.png`: Tigramite graph visualization for the constrained directed lagged edges used by the adjacency.
+- `pcmci_raw_results.npz`: raw expanded `p_matrix`, `val_matrix`, and `graph` arrays in full feature space, plus filtered matrices used for plotting.
 """
 
 
@@ -667,6 +795,8 @@ def export_results(
     p_matrix_full: np.ndarray,
     val_matrix_full: np.ndarray,
     graph_matrix_full: np.ndarray,
+    graph_matrix_for_plot: np.ndarray,
+    val_matrix_for_plot: np.ndarray,
     summary: dict[str, Any],
     verbosity: int,
 ) -> None:
@@ -685,6 +815,8 @@ def export_results(
         p_matrix=p_matrix_full,
         val_matrix=val_matrix_full,
         graph=graph_matrix_full,
+        graph_for_plot=graph_matrix_for_plot,
+        val_matrix_for_plot=val_matrix_for_plot,
         feature_names=np.asarray(prepared.feature_columns, dtype="<U64"),
     )
 
@@ -709,10 +841,17 @@ def main() -> None:
     output_dir = resolve_output_dir(args.output_dir, args.mode)
     output_dir.mkdir(parents=True, exist_ok=True)
     log(f"Final output directory: {output_dir}", args.verbosity)
+    log(f"Constraint profile: {args.constraint_profile}", args.verbosity)
     if args.min_segment_len <= args.tau_max:
         log(
             "Warning: --min_segment_len is not larger than --tau_max. "
             "The run is still allowed, but very short segments can make lagged estimates unstable.",
+            args.verbosity,
+        )
+    if args.alpha_level >= 0.05:
+        log(
+            "Warning: --alpha_level >= 0.05 is permissive for large PCMCI samples and can yield very dense graphs. "
+            "Consider 0.01 or smaller if you want a sparser graph.",
             args.verbosity,
         )
 
@@ -722,12 +861,25 @@ def main() -> None:
         min_segment_len=args.min_segment_len,
         verbosity=args.verbosity,
     )
+    constraint_spec = build_constraint_spec(
+        feature_columns=prepared.feature_columns,
+        profile=args.constraint_profile,
+    )
     log(
         "Prepared PCMCI input with "
         f"{prepared.rows_used_in_pcmci} rows across {prepared.kept_segments} kept segments "
         f"(out of {prepared.total_segments} detected, sampling frequency {format_timedelta(prepared.expected_delta)}).",
         args.verbosity,
     )
+    if prepared.mode == "daytime" and prepared.rows_after_mode_filter > 0:
+        dropped_after_segmenting = 1.0 - (prepared.rows_used_in_pcmci / prepared.rows_after_mode_filter)
+        if dropped_after_segmenting > 0.25:
+            log(
+                "Warning: daytime mode dropped "
+                f"{dropped_after_segmenting:.1%} of rows after segment filtering. "
+                "A high --min_segment_len can bias the graph toward longer daytime segments.",
+                args.verbosity,
+            )
 
     results = run_pcmci(
         prepared=prepared,
@@ -746,7 +898,7 @@ def main() -> None:
         tau_max=args.tau_max,
     )
 
-    log("[4/6] Aggregating directed lag-level edges into variable-level adjacency", args.verbosity)
+    log("[4/6] Applying constraint-aware edge aggregation into variable-level adjacency", args.verbosity)
     edge_df = build_edge_table(
         full_feature_columns=prepared.feature_columns,
         p_matrix_full=p_matrix_full,
@@ -754,16 +906,23 @@ def main() -> None:
         graph_matrix_full=graph_matrix_full,
         alpha_level=args.alpha_level,
         excluded_constant_columns=prepared.excluded_constant_columns,
+        constraint_spec=constraint_spec,
     )
     adjacency_raw, adjacency_for_mask = build_variable_level_adjacency(
         edge_df=edge_df,
         feature_columns=prepared.feature_columns,
     )
+    graph_matrix_for_plot, val_matrix_for_plot = build_plot_matrices_from_edge_table(
+        feature_columns=prepared.feature_columns,
+        edge_df=edge_df,
+        graph_matrix_full=graph_matrix_full,
+        val_matrix_full=val_matrix_full,
+    )
 
     graph_png_created = save_causal_graph(
         full_feature_columns=prepared.feature_columns,
-        graph_matrix_full=graph_matrix_full,
-        val_matrix_full=val_matrix_full,
+        graph_matrix_full=graph_matrix_for_plot,
+        val_matrix_full=val_matrix_for_plot,
         output_path=output_dir / "causal_graph.png",
     )
 
@@ -773,6 +932,7 @@ def main() -> None:
         output_dir=output_dir,
         prepared=prepared,
         edge_df=edge_df,
+        constraint_spec=constraint_spec,
         graph_png_created=graph_png_created,
     )
     export_results(
@@ -784,6 +944,8 @@ def main() -> None:
         p_matrix_full=p_matrix_full,
         val_matrix_full=val_matrix_full,
         graph_matrix_full=graph_matrix_full,
+        graph_matrix_for_plot=graph_matrix_for_plot,
+        val_matrix_for_plot=val_matrix_for_plot,
         summary=summary,
         verbosity=args.verbosity,
     )
