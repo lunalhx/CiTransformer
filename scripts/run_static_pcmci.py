@@ -46,6 +46,8 @@ DEFAULT_TRAIN_PATH = "data/processed/splits/train.csv"
 DEFAULT_OUTPUT_DIR = "results/causal_graphs/static"
 FULL_FEATURE_COLUMNS = list(DEFAULT_FEATURE_COLUMNS)
 ACTIVE_POW_COLUMN = "Active_Pow"
+DEFAULT_SPARSE_MIN_LAG_SUPPORT = 2
+DEFAULT_SPARSE_TOP_K_PARENTS = 3
 DETERMINISTIC_ROOT_COLUMNS = [
     "solar_elevation",
     "sin_time_of_day",
@@ -148,6 +150,24 @@ def parse_args() -> argparse.Namespace:
             "`pv_physical` treats deterministic time features as exogenous roots and treats Active_Pow as a sink."
         ),
     )
+    parser.add_argument(
+        "--sparse_min_lag_support",
+        type=int,
+        default=DEFAULT_SPARSE_MIN_LAG_SUPPORT,
+        help=(
+            "Export a sparse adjacency variant that keeps a source-target pair only when "
+            "at least this many lag-level edges survive the final aggregation rule."
+        ),
+    )
+    parser.add_argument(
+        "--sparse_top_k_parents",
+        type=int,
+        default=DEFAULT_SPARSE_TOP_K_PARENTS,
+        help=(
+            "Export a sparse adjacency variant that keeps the top-k cross-variable parents per target, "
+            "ranked by lag support count and then max |test_stat|."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -177,6 +197,10 @@ def validate_arguments(args: argparse.Namespace) -> None:
         raise ValueError("--alpha_level must be in (0, 1].")
     if args.min_segment_len <= 0:
         raise ValueError("--min_segment_len must be positive.")
+    if args.sparse_min_lag_support <= 0:
+        raise ValueError("--sparse_min_lag_support must be positive.")
+    if args.sparse_top_k_parents <= 0:
+        raise ValueError("--sparse_top_k_parents must be positive.")
 
 
 def normalize_column_name(column: str) -> str:
@@ -570,8 +594,90 @@ def build_variable_level_adjacency(
     for edge in directed_edges.itertuples(index=False):
         adjacency_raw.loc[edge.source, edge.target] = 1
 
+    adjacency_for_mask = force_diagonal_one(adjacency_raw)
+    return adjacency_raw, adjacency_for_mask
+
+
+def force_diagonal_one(adjacency_raw: pd.DataFrame) -> pd.DataFrame:
     adjacency_for_mask = adjacency_raw.copy()
     np.fill_diagonal(adjacency_for_mask.values, 1)
+    return adjacency_for_mask
+
+
+def build_pair_level_support_table(edge_df: pd.DataFrame) -> pd.DataFrame:
+    used_edge_rows = edge_df.loc[
+        edge_df["used_for_variable_adjacency"] == 1,
+        ["source", "target", "lag", "test_stat", "p_value"],
+    ].copy()
+    if used_edge_rows.empty:
+        return pd.DataFrame(
+            columns=[
+                "source",
+                "target",
+                "lag_support_count",
+                "lags_present",
+                "max_abs_test_stat",
+                "min_p_value",
+            ]
+        )
+
+    used_edge_rows["abs_test_stat"] = used_edge_rows["test_stat"].abs()
+    pair_support_df = (
+        used_edge_rows.groupby(["source", "target"], as_index=False)
+        .agg(
+            lag_support_count=("lag", "size"),
+            lags_present=("lag", lambda values: ",".join(str(int(lag)) for lag in sorted(values.tolist()))),
+            max_abs_test_stat=("abs_test_stat", "max"),
+            min_p_value=("p_value", "min"),
+        )
+        .sort_values(["target", "lag_support_count", "max_abs_test_stat", "source"], ascending=[True, False, False, True])
+        .reset_index(drop=True)
+    )
+    return pair_support_df
+
+
+def build_lag_support_count_matrix(
+    pair_support_df: pd.DataFrame,
+    feature_columns: list[str],
+) -> pd.DataFrame:
+    lag_support_df = pd.DataFrame(0, index=feature_columns, columns=feature_columns, dtype=int)
+    for row in pair_support_df.itertuples(index=False):
+        lag_support_df.loc[row.source, row.target] = int(row.lag_support_count)
+    return lag_support_df
+
+
+def build_support_threshold_adjacency(
+    lag_support_df: pd.DataFrame,
+    min_lag_support: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    adjacency_raw = (lag_support_df >= min_lag_support).astype(int)
+    adjacency_for_mask = force_diagonal_one(adjacency_raw)
+    return adjacency_raw, adjacency_for_mask
+
+
+def build_top_k_parent_adjacency(
+    pair_support_df: pd.DataFrame,
+    feature_columns: list[str],
+    top_k_parents: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    adjacency_raw = pd.DataFrame(0, index=feature_columns, columns=feature_columns, dtype=int)
+    if top_k_parents <= 0 or pair_support_df.empty:
+        return adjacency_raw, force_diagonal_one(adjacency_raw)
+
+    for target in feature_columns:
+        candidate_rows = pair_support_df.loc[
+            (pair_support_df["target"] == target) & (pair_support_df["source"] != target)
+        ].copy()
+        if candidate_rows.empty:
+            continue
+        candidate_rows = candidate_rows.sort_values(
+            ["lag_support_count", "max_abs_test_stat", "source"],
+            ascending=[False, False, True],
+        )
+        for row in candidate_rows.head(top_k_parents).itertuples(index=False):
+            adjacency_raw.loc[row.source, row.target] = 1
+
+    adjacency_for_mask = force_diagonal_one(adjacency_raw)
     return adjacency_raw, adjacency_for_mask
 
 
@@ -601,17 +707,19 @@ def build_plot_matrices_from_edge_table(
     return graph_matrix_for_plot, val_matrix_for_plot
 
 
-def save_adjacency_heatmap(
-    adjacency_df: pd.DataFrame,
+def save_matrix_heatmap(
+    matrix_df: pd.DataFrame,
     output_path: Path,
     title: str,
+    cmap: str = "Blues",
+    fmt: str = "d",
 ) -> None:
     plt.figure(figsize=(11, 9))
     sns.heatmap(
-        adjacency_df,
+        matrix_df,
         annot=True,
-        fmt="d",
-        cmap="Blues",
+        fmt=fmt,
+        cmap=cmap,
         square=True,
         cbar=False,
         linewidths=0.5,
@@ -623,6 +731,20 @@ def save_adjacency_heatmap(
     plt.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()
+
+
+def save_adjacency_heatmap(
+    adjacency_df: pd.DataFrame,
+    output_path: Path,
+    title: str,
+) -> None:
+    save_matrix_heatmap(
+        matrix_df=adjacency_df,
+        output_path=output_path,
+        title=title,
+        cmap="Blues",
+        fmt="d",
+    )
 
 
 def save_causal_graph(
@@ -653,6 +775,10 @@ def build_summary(
     output_dir: Path,
     prepared: PreparedPCMCIData,
     edge_df: pd.DataFrame,
+    pair_support_df: pd.DataFrame,
+    lag_support_df: pd.DataFrame,
+    sparse_support_raw: pd.DataFrame,
+    top_k_raw: pd.DataFrame,
     constraint_spec: ConstraintSpec,
     graph_png_created: bool,
 ) -> dict[str, Any]:
@@ -718,7 +844,53 @@ def build_summary(
         "causal_graph_png_created": graph_png_created,
         "generated_at_utc": pd.Timestamp.utcnow().isoformat(),
     }
-    return summary
+    return enrich_summary_with_sparse_exports(
+        summary=summary,
+        sparse_min_lag_support=args.sparse_min_lag_support,
+        sparse_top_k_parents=args.sparse_top_k_parents,
+        pair_support_df=pair_support_df,
+        lag_support_df=lag_support_df,
+        sparse_support_raw=sparse_support_raw,
+        top_k_raw=top_k_raw,
+    )
+
+
+def enrich_summary_with_sparse_exports(
+    summary: dict[str, Any],
+    *,
+    sparse_min_lag_support: int,
+    sparse_top_k_parents: int,
+    pair_support_df: pd.DataFrame,
+    lag_support_df: pd.DataFrame,
+    sparse_support_raw: pd.DataFrame,
+    top_k_raw: pd.DataFrame,
+) -> dict[str, Any]:
+    enriched_summary = dict(summary)
+    enriched_summary.update(
+        {
+            "sparse_min_lag_support": int(sparse_min_lag_support),
+            "sparse_top_k_parents": int(sparse_top_k_parents),
+            "lag_support_count_rule": (
+                "lag_support_count[i, j] counts how many lag-level rows satisfy used_for_variable_adjacency = 1 "
+                "for the same ordered source-target pair."
+            ),
+            "sparse_support_rule": (
+                "support-threshold adjacency keeps a pair when lag_support_count >= sparse_min_lag_support; "
+                "its mask export then forces the diagonal to 1."
+            ),
+            "top_k_parent_rule": (
+                "top-k adjacency keeps at most sparse_top_k_parents cross-variable parents per target, "
+                "ranked by lag_support_count descending and then max |test_stat| descending; "
+                "its mask export then forces the diagonal to 1."
+            ),
+            "pair_level_directed_edges_after_aggregation": int((lag_support_df > 0).sum().sum()),
+            "lag_support_total_across_pairs": int(lag_support_df.to_numpy().sum()),
+            "pair_level_support_rows_exported": int(len(pair_support_df)),
+            "sparse_support_pair_edges": int(sparse_support_raw.to_numpy().sum()),
+            "top_k_pair_edges": int(top_k_raw.to_numpy().sum()),
+        }
+    )
+    return enriched_summary
 
 
 def build_readme_markdown(summary: dict[str, Any]) -> str:
@@ -765,6 +937,9 @@ def build_readme_markdown(summary: dict[str, Any]) -> str:
 
 - Lag-level significance rule: `{summary["significance_rule"]}`.
 - Variable-level aggregation rule: `{summary["variable_level_aggregation_rule"]}`.
+- Lag-support counting rule: `{summary["lag_support_count_rule"]}`.
+- Sparse support-threshold rule: `{summary["sparse_support_rule"]}`.
+- Sparse top-k rule: `{summary["top_k_parent_rule"]}`.
 - Method caveat: {summary["method_caveat"]}.
 - Contemporaneous links with unresolved direction such as `o-o` remain in `edges_lag_level.csv`, but they are excluded from the directed adjacency mask.
 - `causal_graph.png` is a filtered view that shows only the constrained directed lagged edges used in the final adjacency.
@@ -778,6 +953,15 @@ def build_readme_markdown(summary: dict[str, Any]) -> str:
 
 - `adjacency_variable_level_raw.csv`: directed binary adjacency without forcing diagonal values.
 - `adjacency_variable_level_for_mask.csv`: same adjacency, but the diagonal is forced to 1 for downstream masks.
+- `edges_pair_level_support.csv`: pair-level summary after aggregation, including lag support count, supported lags, max |test_stat|, and min p-value.
+- `adjacency_lag_support_count.csv`: integer matrix of lag support counts for each directed pair.
+- `adjacency_lag_support_heatmap.png`: heatmap of the lag support count matrix.
+- `adjacency_variable_level_support_ge{summary["sparse_min_lag_support"]}_raw.csv`: sparse binary adjacency that keeps pairs with at least `{summary["sparse_min_lag_support"]}` supporting lags.
+- `adjacency_variable_level_support_ge{summary["sparse_min_lag_support"]}_for_mask.csv`: same sparse support-threshold adjacency, but with the diagonal forced to 1.
+- `adjacency_support_ge{summary["sparse_min_lag_support"]}_heatmap.png`: heatmap of the sparse support-threshold adjacency.
+- `adjacency_variable_level_top{summary["sparse_top_k_parents"]}_parents_raw.csv`: sparse binary adjacency that keeps the top `{summary["sparse_top_k_parents"]}` cross-variable parents per target.
+- `adjacency_variable_level_top{summary["sparse_top_k_parents"]}_parents_for_mask.csv`: same top-k adjacency, but with the diagonal forced to 1.
+- `adjacency_top{summary["sparse_top_k_parents"]}_parents_heatmap.png`: heatmap of the sparse top-k adjacency.
 - `edges_lag_level.csv`: lag-level PCMCI export with p-values, test statistics, graph symbols, raw directed-edge flags, constraint flags, and the final aggregation flag.
 - `pcmci_summary.json`: parameters, counts, segment statistics, and rules used in this run.
 - `adjacency_heatmap.png`: heatmap of the raw variable-level adjacency.
@@ -790,8 +974,14 @@ def export_results(
     output_dir: Path,
     prepared: PreparedPCMCIData,
     edge_df: pd.DataFrame,
+    pair_support_df: pd.DataFrame,
     adjacency_raw: pd.DataFrame,
     adjacency_for_mask: pd.DataFrame,
+    lag_support_df: pd.DataFrame,
+    sparse_support_raw: pd.DataFrame,
+    sparse_support_for_mask: pd.DataFrame,
+    top_k_raw: pd.DataFrame,
+    top_k_for_mask: pd.DataFrame,
     p_matrix_full: np.ndarray,
     val_matrix_full: np.ndarray,
     graph_matrix_full: np.ndarray,
@@ -805,6 +995,26 @@ def export_results(
 
     adjacency_raw.to_csv(output_dir / "adjacency_variable_level_raw.csv", encoding="utf-8-sig")
     adjacency_for_mask.to_csv(output_dir / "adjacency_variable_level_for_mask.csv", encoding="utf-8-sig")
+    pair_support_df.to_csv(output_dir / "edges_pair_level_support.csv", index=False, encoding="utf-8-sig")
+    lag_support_df.to_csv(output_dir / "adjacency_lag_support_count.csv", encoding="utf-8-sig")
+    sparse_support_suffix = f"support_ge{summary['sparse_min_lag_support']}"
+    sparse_support_raw.to_csv(
+        output_dir / f"adjacency_variable_level_{sparse_support_suffix}_raw.csv",
+        encoding="utf-8-sig",
+    )
+    sparse_support_for_mask.to_csv(
+        output_dir / f"adjacency_variable_level_{sparse_support_suffix}_for_mask.csv",
+        encoding="utf-8-sig",
+    )
+    top_k_suffix = f"top{summary['sparse_top_k_parents']}_parents"
+    top_k_raw.to_csv(
+        output_dir / f"adjacency_variable_level_{top_k_suffix}_raw.csv",
+        encoding="utf-8-sig",
+    )
+    top_k_for_mask.to_csv(
+        output_dir / f"adjacency_variable_level_{top_k_suffix}_for_mask.csv",
+        encoding="utf-8-sig",
+    )
     edge_df.to_csv(output_dir / "edges_lag_level.csv", index=False, encoding="utf-8-sig")
 
     with (output_dir / "pcmci_summary.json").open("w", encoding="utf-8") as file:
@@ -824,6 +1034,23 @@ def export_results(
         adjacency_raw,
         output_dir / "adjacency_heatmap.png",
         title=f"Static PCMCI Variable-Level Adjacency ({prepared.mode})",
+    )
+    save_matrix_heatmap(
+        matrix_df=lag_support_df,
+        output_path=output_dir / "adjacency_lag_support_heatmap.png",
+        title=f"Static PCMCI Lag Support Count ({prepared.mode})",
+        cmap="YlOrRd",
+        fmt="d",
+    )
+    save_adjacency_heatmap(
+        sparse_support_raw,
+        output_dir / f"adjacency_{sparse_support_suffix}_heatmap.png",
+        title=f"Static PCMCI Support >= {summary['sparse_min_lag_support']} ({prepared.mode})",
+    )
+    save_adjacency_heatmap(
+        top_k_raw,
+        output_dir / f"adjacency_{top_k_suffix}_heatmap.png",
+        title=f"Static PCMCI Top-{summary['sparse_top_k_parents']} Parents ({prepared.mode})",
     )
 
     readme_text = build_readme_markdown(summary)
@@ -912,6 +1139,20 @@ def main() -> None:
         edge_df=edge_df,
         feature_columns=prepared.feature_columns,
     )
+    pair_support_df = build_pair_level_support_table(edge_df=edge_df)
+    lag_support_df = build_lag_support_count_matrix(
+        pair_support_df=pair_support_df,
+        feature_columns=prepared.feature_columns,
+    )
+    sparse_support_raw, sparse_support_for_mask = build_support_threshold_adjacency(
+        lag_support_df=lag_support_df,
+        min_lag_support=args.sparse_min_lag_support,
+    )
+    top_k_raw, top_k_for_mask = build_top_k_parent_adjacency(
+        pair_support_df=pair_support_df,
+        feature_columns=prepared.feature_columns,
+        top_k_parents=args.sparse_top_k_parents,
+    )
     graph_matrix_for_plot, val_matrix_for_plot = build_plot_matrices_from_edge_table(
         feature_columns=prepared.feature_columns,
         edge_df=edge_df,
@@ -932,6 +1173,10 @@ def main() -> None:
         output_dir=output_dir,
         prepared=prepared,
         edge_df=edge_df,
+        pair_support_df=pair_support_df,
+        lag_support_df=lag_support_df,
+        sparse_support_raw=sparse_support_raw,
+        top_k_raw=top_k_raw,
         constraint_spec=constraint_spec,
         graph_png_created=graph_png_created,
     )
@@ -939,8 +1184,14 @@ def main() -> None:
         output_dir=output_dir,
         prepared=prepared,
         edge_df=edge_df,
+        pair_support_df=pair_support_df,
         adjacency_raw=adjacency_raw,
         adjacency_for_mask=adjacency_for_mask,
+        lag_support_df=lag_support_df,
+        sparse_support_raw=sparse_support_raw,
+        sparse_support_for_mask=sparse_support_for_mask,
+        top_k_raw=top_k_raw,
+        top_k_for_mask=top_k_for_mask,
         p_matrix_full=p_matrix_full,
         val_matrix_full=val_matrix_full,
         graph_matrix_full=graph_matrix_full,

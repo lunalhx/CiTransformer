@@ -27,6 +27,9 @@
 
 - Lag-level significance rule: `significant = (p_value <= alpha_level)`.
 - Variable-level aggregation rule: `A[i, j] = 1 if there exists at least one lag-level row with used_for_variable_adjacency = 1, where used_for_variable_adjacency = raw_directed_lag_edge and constraint_allowed, and raw_directed_lag_edge = significant and graph_symbol == '-->'`.
+- Lag-support counting rule: `lag_support_count[i, j] counts how many lag-level rows satisfy used_for_variable_adjacency = 1 for the same ordered source-target pair.`.
+- Sparse support-threshold rule: `support-threshold adjacency keeps a pair when lag_support_count >= sparse_min_lag_support; its mask export then forces the diagonal to 1.`.
+- Sparse top-k rule: `top-k adjacency keeps at most sparse_top_k_parents cross-variable parents per target, ranked by lag_support_count descending and then max |test_stat| descending; its mask export then forces the diagonal to 1.`.
 - Method caveat: ParCorr is a continuous-variable conditional independence test. `day_night_label` is therefore treated numerically in mode=all, and becomes an excluded constant column in mode=daytime..
 - Contemporaneous links with unresolved direction such as `o-o` remain in `edges_lag_level.csv`, but they are excluded from the directed adjacency mask.
 - `causal_graph.png` is a filtered view that shows only the constrained directed lagged edges used in the final adjacency.
@@ -43,6 +46,15 @@
 
 - `adjacency_variable_level_raw.csv`: directed binary adjacency without forcing diagonal values.
 - `adjacency_variable_level_for_mask.csv`: same adjacency, but the diagonal is forced to 1 for downstream masks.
+- `edges_pair_level_support.csv`: pair-level summary after aggregation, including lag support count, supported lags, max |test_stat|, and min p-value.
+- `adjacency_lag_support_count.csv`: integer matrix of lag support counts for each directed pair.
+- `adjacency_lag_support_heatmap.png`: heatmap of the lag support count matrix.
+- `adjacency_variable_level_support_ge2_raw.csv`: sparse binary adjacency that keeps pairs with at least `2` supporting lags.
+- `adjacency_variable_level_support_ge2_for_mask.csv`: same sparse support-threshold adjacency, but with the diagonal forced to 1.
+- `adjacency_support_ge2_heatmap.png`: heatmap of the sparse support-threshold adjacency.
+- `adjacency_variable_level_top3_parents_raw.csv`: sparse binary adjacency that keeps the top `3` cross-variable parents per target.
+- `adjacency_variable_level_top3_parents_for_mask.csv`: same top-k adjacency, but with the diagonal forced to 1.
+- `adjacency_top3_parents_heatmap.png`: heatmap of the sparse top-k adjacency.
 - `edges_lag_level.csv`: lag-level PCMCI export with p-values, test statistics, graph symbols, raw directed-edge flags, constraint flags, and the final aggregation flag.
 - `pcmci_summary.json`: parameters, counts, segment statistics, and rules used in this run.
 - `adjacency_heatmap.png`: heatmap of the raw variable-level adjacency.

@@ -1,6 +1,6 @@
 {
   "train_path": "/home/lunalhx/projects/CiTransformer/data/processed/splits/train.csv",
-  "output_dir": "/home/lunalhx/projects/CiTransformer/results/causal_graphs/static/daytime",
+  "output_dir": "/Users/lunalhx/Desktop/202509/CiTransformer/results/causal_graphs/static/daytime(v2-physical)",
   "mode": "daytime",
   "time_column": "timestamp",
   "feature_columns_output_order": [
@@ -88,5 +88,15 @@
   "constrained_directed_rows_used_for_variable_adjacency": 205,
   "directed_rows_removed_by_constraints": 130,
   "causal_graph_png_created": true,
-  "generated_at_utc": "2026-04-23T13:58:20.672739+00:00"
+  "generated_at_utc": "2026-04-24T11:49:27.301696+00:00",
+  "sparse_min_lag_support": 2,
+  "sparse_top_k_parents": 3,
+  "lag_support_count_rule": "lag_support_count[i, j] counts how many lag-level rows satisfy used_for_variable_adjacency = 1 for the same ordered source-target pair.",
+  "sparse_support_rule": "support-threshold adjacency keeps a pair when lag_support_count >= sparse_min_lag_support; its mask export then forces the diagonal to 1.",
+  "top_k_parent_rule": "top-k adjacency keeps at most sparse_top_k_parents cross-variable parents per target, ranked by lag_support_count descending and then max |test_stat| descending; its mask export then forces the diagonal to 1.",
+  "pair_level_directed_edges_after_aggregation": 30,
+  "lag_support_total_across_pairs": 205,
+  "pair_level_support_rows_exported": 30,
+  "sparse_support_pair_edges": 26,
+  "top_k_pair_edges": 15
 }
