@@ -48,7 +48,7 @@ fi
 export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/citransformer-matplotlib}"
 mkdir -p "${MPLCONFIGDIR}"
 
-DATA_DIR="${DATA_DIR:-data/processed}"
+DATA_DIR="${DATA_DIR:-data/processed_selected_2020_2022}"
 MODE="${MODE:-train}"
 REPORT_SPLIT="${REPORT_SPLIT:-test}"
 SEQ_LEN="${SEQ_LEN:-96}"

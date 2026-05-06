@@ -25,6 +25,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from models.baseline import LSTMBaseline
 from utils.datasets import (
+    DEFAULT_DATA_DIR,
     DEFAULT_FEATURE_COLUMNS,
     DEFAULT_TARGET_COLUMN,
     ContinuousSegmentTimeSeriesDataset,
@@ -57,7 +58,7 @@ class EarlyStopping:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train and evaluate the LSTM baseline for PV power forecasting.")
 
-    parser.add_argument("--data_dir", type=str, default="data/processed", help="Directory containing split CSV files.")
+    parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR, help="Directory containing split CSV files.")
     parser.add_argument("--time_col", type=str, default=None, help="Optional explicit timestamp column name.")
     parser.add_argument("--target_col", type=str, default=DEFAULT_TARGET_COLUMN, help="Prediction target column.")
     parser.add_argument(
@@ -175,6 +176,13 @@ def to_float(value: float | np.floating | None) -> float | None:
     return value
 
 
+def to_percentage(numerator: float | np.floating, denominator: float | np.floating, eps: float) -> float | None:
+    denominator = float(denominator)
+    if abs(denominator) <= eps:
+        return None
+    return to_float(float(numerator) / denominator * 100.0)
+
+
 def compute_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-6) -> dict[str, float | int | None]:
     if len(y_true) == 0:
         return {
@@ -182,19 +190,48 @@ def compute_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray, eps: floa
             "mae": None,
             "mse": None,
             "rmse": None,
+            "mbe": None,
+            "median_ae": None,
+            "p95_ae": None,
+            "max_ae": None,
             "smape": None,
             "mape_nonzero": None,
+            "wape": None,
+            "nmae_by_mean": None,
+            "nrmse_by_mean": None,
+            "nmbe_by_mean": None,
+            "nmae_by_max": None,
+            "nrmse_by_max": None,
+            "nmbe_by_max": None,
+            "r2": None,
+            "pearson_r": None,
+            "mean_true": None,
+            "mean_pred": None,
+            "mean_abs_true": None,
+            "max_abs_true": None,
+            "sum_abs_true": None,
             "nonzero_target_count": 0,
         }
 
     y_true = y_true.astype(np.float64)
     y_pred = y_pred.astype(np.float64)
 
-    error = y_true - y_pred
-    mae = np.mean(np.abs(error))
-    mse = np.mean(np.square(error))
+    error = y_pred - y_true
+    abs_error = np.abs(error)
+    squared_error = np.square(error)
+    mae = np.mean(abs_error)
+    mse = np.mean(squared_error)
     rmse = np.sqrt(mse)
     smape = np.mean(2.0 * np.abs(error) / (np.abs(y_true) + np.abs(y_pred) + eps)) * 100.0
+    mbe = np.mean(error)
+    median_ae = np.median(abs_error)
+    p95_ae = np.percentile(abs_error, 95)
+    max_ae = np.max(abs_error)
+    mean_true = np.mean(y_true)
+    mean_pred = np.mean(y_pred)
+    mean_abs_true = np.mean(np.abs(y_true))
+    max_abs_true = np.max(np.abs(y_true))
+    sum_abs_true = np.sum(np.abs(y_true))
 
     nonzero_mask = np.abs(y_true) > eps
     if nonzero_mask.any():
@@ -202,13 +239,40 @@ def compute_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray, eps: floa
     else:
         mape = None
 
+    ss_res = np.sum(squared_error)
+    ss_tot = np.sum(np.square(y_true - mean_true))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > eps else None
+
+    if len(y_true) > 1 and np.std(y_true) > eps and np.std(y_pred) > eps:
+        pearson_r = np.corrcoef(y_true, y_pred)[0, 1]
+    else:
+        pearson_r = None
+
     return {
         "count": int(len(y_true)),
         "mae": to_float(mae),
         "mse": to_float(mse),
         "rmse": to_float(rmse),
+        "mbe": to_float(mbe),
+        "median_ae": to_float(median_ae),
+        "p95_ae": to_float(p95_ae),
+        "max_ae": to_float(max_ae),
         "smape": to_float(smape),
         "mape_nonzero": to_float(mape),
+        "wape": to_percentage(np.sum(abs_error), sum_abs_true, eps),
+        "nmae_by_mean": to_percentage(mae, mean_abs_true, eps),
+        "nrmse_by_mean": to_percentage(rmse, mean_abs_true, eps),
+        "nmbe_by_mean": to_percentage(mbe, mean_abs_true, eps),
+        "nmae_by_max": to_percentage(mae, max_abs_true, eps),
+        "nrmse_by_max": to_percentage(rmse, max_abs_true, eps),
+        "nmbe_by_max": to_percentage(mbe, max_abs_true, eps),
+        "r2": to_float(r2),
+        "pearson_r": to_float(pearson_r),
+        "mean_true": to_float(mean_true),
+        "mean_pred": to_float(mean_pred),
+        "mean_abs_true": to_float(mean_abs_true),
+        "max_abs_true": to_float(max_abs_true),
+        "sum_abs_true": to_float(sum_abs_true),
         "nonzero_target_count": int(nonzero_mask.sum()),
     }
 
@@ -253,6 +317,11 @@ def evaluate_prediction_arrays(
         "per_horizon_all": per_horizon_all,
         "per_horizon_daytime": per_horizon_daytime,
         "mape_note": "MAPE excludes targets with abs(y_true) <= 1e-6 to avoid night-time zero division.",
+        "normalization_note": (
+            "nmae_by_mean/nrmse_by_mean/nmbe_by_mean use mean(abs(y_true)) as denominator. "
+            "nmae_by_max/nrmse_by_max/nmbe_by_max use max(abs(y_true)) in the evaluated split/scope "
+            "as a PV capacity proxy."
+        ),
     }
 
 
@@ -796,16 +865,22 @@ def main() -> None:
         f"MAE={format_metric_for_console(all_metrics['mae'])} "
         f"MSE={format_metric_for_console(all_metrics['mse'])} "
         f"RMSE={format_metric_for_console(all_metrics['rmse'])} "
+        f"MBE={format_metric_for_console(all_metrics['mbe'])} "
         f"sMAPE={format_metric_for_console(all_metrics['smape'])} "
-        f"MAPE(nonzero)={format_metric_for_console(all_metrics['mape_nonzero'])}"
+        f"MAPE(nonzero)={format_metric_for_console(all_metrics['mape_nonzero'])} "
+        f"WAPE={format_metric_for_console(all_metrics['wape'])} "
+        f"nRMSE(max)={format_metric_for_console(all_metrics['nrmse_by_max'])}"
     )
     log(
         "daytime only  | "
         f"MAE={format_metric_for_console(daytime_metrics['mae'])} "
         f"MSE={format_metric_for_console(daytime_metrics['mse'])} "
         f"RMSE={format_metric_for_console(daytime_metrics['rmse'])} "
+        f"MBE={format_metric_for_console(daytime_metrics['mbe'])} "
         f"sMAPE={format_metric_for_console(daytime_metrics['smape'])} "
-        f"MAPE(nonzero)={format_metric_for_console(daytime_metrics['mape_nonzero'])}"
+        f"MAPE(nonzero)={format_metric_for_console(daytime_metrics['mape_nonzero'])} "
+        f"WAPE={format_metric_for_console(daytime_metrics['wape'])} "
+        f"nRMSE(max)={format_metric_for_console(daytime_metrics['nrmse_by_max'])}"
     )
 
 

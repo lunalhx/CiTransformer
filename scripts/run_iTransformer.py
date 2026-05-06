@@ -33,7 +33,7 @@ from scripts.run_lstm import (
     set_random_seed,
     train_one_epoch,
 )
-from utils.datasets import DEFAULT_FEATURE_COLUMNS, DEFAULT_TARGET_COLUMN
+from utils.datasets import DEFAULT_DATA_DIR, DEFAULT_FEATURE_COLUMNS, DEFAULT_TARGET_COLUMN
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
         description="Train and evaluate the vanilla iTransformer baseline for PV power forecasting."
     )
 
-    parser.add_argument("--data_dir", type=str, default="data/processed", help="Directory containing split CSV files.")
+    parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR, help="Directory containing split CSV files.")
     parser.add_argument("--time_col", type=str, default=None, help="Optional explicit timestamp column name.")
     parser.add_argument("--target_col", type=str, default=DEFAULT_TARGET_COLUMN, help="Prediction target column.")
     parser.add_argument(
@@ -371,16 +371,22 @@ def evaluate_and_export(
         f"MAE={format_metric_for_console(all_metrics['mae'])} "
         f"MSE={format_metric_for_console(all_metrics['mse'])} "
         f"RMSE={format_metric_for_console(all_metrics['rmse'])} "
+        f"MBE={format_metric_for_console(all_metrics['mbe'])} "
         f"sMAPE={format_metric_for_console(all_metrics['smape'])} "
-        f"MAPE(nonzero)={format_metric_for_console(all_metrics['mape_nonzero'])}"
+        f"MAPE(nonzero)={format_metric_for_console(all_metrics['mape_nonzero'])} "
+        f"WAPE={format_metric_for_console(all_metrics['wape'])} "
+        f"nRMSE(max)={format_metric_for_console(all_metrics['nrmse_by_max'])}"
     )
     log(
         "daytime only  | "
         f"MAE={format_metric_for_console(daytime_metrics['mae'])} "
         f"MSE={format_metric_for_console(daytime_metrics['mse'])} "
         f"RMSE={format_metric_for_console(daytime_metrics['rmse'])} "
+        f"MBE={format_metric_for_console(daytime_metrics['mbe'])} "
         f"sMAPE={format_metric_for_console(daytime_metrics['smape'])} "
-        f"MAPE(nonzero)={format_metric_for_console(daytime_metrics['mape_nonzero'])}"
+        f"MAPE(nonzero)={format_metric_for_console(daytime_metrics['mape_nonzero'])} "
+        f"WAPE={format_metric_for_console(daytime_metrics['wape'])} "
+        f"nRMSE(max)={format_metric_for_console(daytime_metrics['nrmse_by_max'])}"
     )
 
 
