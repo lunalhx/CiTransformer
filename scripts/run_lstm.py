@@ -117,6 +117,36 @@ def parse_args() -> argparse.Namespace:
         default="checkpoints/lstm/best_model.pth",
         help="Path to save the best checkpoint.",
     )
+    parser.add_argument(
+        "--eval_checkpoint_path",
+        type=str,
+        default=None,
+        help="Optional existing best_model.pth path. If provided, skip training and only export validation/test results.",
+    )
+    parser.add_argument(
+        "--report_split",
+        type=str,
+        default="test",
+        choices=["validation", "test"],
+        help="Which split to export as predictions.csv / pred_plot.png and print as the main summary.",
+    )
+    parser.add_argument(
+        "--experiment_name",
+        type=str,
+        default=None,
+        help="Optional human-readable experiment name stored in metrics.json for tuning bookkeeping.",
+    )
+    parser.add_argument(
+        "--tuning_stage",
+        type=str,
+        default=None,
+        help="Optional tuning stage label stored in metrics.json (for example: s1, s2, final).",
+    )
+    parser.add_argument(
+        "--tuning_only",
+        action="store_true",
+        help="Validation-only tuning mode. Skips loading/evaluating the test split and requires --report_split validation.",
+    )
 
     parser.add_argument(
         "--max_train_batches",
@@ -676,39 +706,257 @@ def print_dataset_summaries(datasets: dict[str, ContinuousSegmentTimeSeriesDatas
     log("-" * 80)
 
 
+def resolve_path(path_value: str) -> Path:
+    path = Path(path_value)
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def build_lstm_model(args: argparse.Namespace) -> LSTMBaseline:
+    return LSTMBaseline(
+        input_size=len(args.feature_cols),
+        hidden_size=args.hidden_size,
+        pred_len=args.pred_len,
+        num_layers=args.num_layers,
+        dropout=args.dropout,
+    )
+
+
+def build_eval_args_from_checkpoint(cli_args: argparse.Namespace, checkpoint_args: dict[str, Any]) -> argparse.Namespace:
+    eval_args = argparse.Namespace(**checkpoint_args)
+
+    eval_args.data_dir = cli_args.data_dir
+    if cli_args.time_col is not None:
+        eval_args.time_col = cli_args.time_col
+    if cli_args.sampling_freq_minutes is not None:
+        eval_args.sampling_freq_minutes = cli_args.sampling_freq_minutes
+    eval_args.device = cli_args.device
+    eval_args.results_dir = cli_args.results_dir
+    eval_args.report_split = cli_args.report_split
+    eval_args.experiment_name = cli_args.experiment_name or getattr(eval_args, "experiment_name", None)
+    eval_args.tuning_stage = cli_args.tuning_stage or getattr(eval_args, "tuning_stage", None)
+    if cli_args.max_eval_batches is not None:
+        eval_args.max_eval_batches = cli_args.max_eval_batches
+    eval_args.progress_mininterval = cli_args.progress_mininterval
+    eval_args.num_workers = cli_args.num_workers
+    eval_args.tuning_only = False
+    eval_args.eval_checkpoint_path = cli_args.eval_checkpoint_path
+    return eval_args
+
+
+def evaluate_and_export(
+    args: argparse.Namespace,
+    model: nn.Module,
+    datasets: dict[str, ContinuousSegmentTimeSeriesDataset],
+    raw_frames: dict[str, pd.DataFrame],
+    scalers: Any,
+    expected_delta: pd.Timedelta,
+    results_dir: Path,
+    device: torch.device,
+    checkpoint_path: Path,
+    best_epoch: int,
+    best_val_loss: float | None,
+    history: list[dict[str, float | int]],
+) -> None:
+    target_feature_index = int(list(args.feature_cols).index(args.target_col)) if args.target_col in args.feature_cols else None
+    trainable_parameter_count = int(sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
+    validation_loader = create_data_loader(datasets["validation"], args.batch_size, False, args.num_workers, device)
+
+    validation_prediction_dict = collect_predictions(
+        model=model,
+        loader=validation_loader,
+        target_scaler=scalers.target_scaler,
+        device=device,
+        split_name="validation",
+        progress_mininterval=args.progress_mininterval,
+        max_batches=args.max_eval_batches,
+    )
+    validation_metrics = evaluate_prediction_arrays(
+        y_true=validation_prediction_dict["y_true"],
+        y_pred=validation_prediction_dict["y_pred"],
+        day_night_label=validation_prediction_dict["target_day_night"],
+    )
+
+    test_metrics: dict[str, Any] | None = None
+    reported_split_name = args.report_split
+    if reported_split_name == "validation":
+        reported_prediction_dict = validation_prediction_dict
+    else:
+        if "test" not in datasets:
+            raise RuntimeError("Test dataset was not loaded, so report_split=test is unavailable in this run mode.")
+        test_loader = create_data_loader(datasets["test"], args.batch_size, False, args.num_workers, device)
+        reported_prediction_dict = collect_predictions(
+            model=model,
+            loader=test_loader,
+            target_scaler=scalers.target_scaler,
+            device=device,
+            split_name="test",
+            progress_mininterval=args.progress_mininterval,
+            max_batches=args.max_eval_batches,
+        )
+        test_metrics = evaluate_prediction_arrays(
+            y_true=reported_prediction_dict["y_true"],
+            y_pred=reported_prediction_dict["y_pred"],
+            day_night_label=reported_prediction_dict["target_day_night"],
+        )
+
+    reported_metrics = validation_metrics if reported_split_name == "validation" else test_metrics
+    if reported_metrics is None:
+        raise RuntimeError("reported_metrics should not be None after evaluation.")
+
+    predictions_df = build_prediction_dataframe(
+        prediction_dict=reported_prediction_dict,
+        target_timezone=datasets[reported_split_name].timezone,
+    )
+
+    metrics_payload = {
+        "config": vars(args),
+        "experiment_name": args.experiment_name,
+        "tuning_stage": args.tuning_stage,
+        "device": str(device),
+        "baseline_type": "lstm",
+        "baseline_definition": "Sequence-to-vector LSTM that maps the last encoder hidden state to future Active_Pow horizons.",
+        "best_epoch": best_epoch,
+        "best_validation_loss": best_val_loss,
+        "expected_delta_minutes": float(expected_delta / pd.Timedelta(minutes=1)),
+        "dataset_summary": {split_name: dataset.summary() for split_name, dataset in datasets.items()},
+        "raw_split_rows": {split_name: int(len(df)) for split_name, df in raw_frames.items()},
+        "target_feature_index": target_feature_index,
+        "report_split": args.report_split,
+        "calibration_usage": "loaded_but_unused",
+        "trainable_parameter_count": trainable_parameter_count,
+        "validation_metrics": validation_metrics,
+        "reported_metrics": reported_metrics,
+        "test_metrics": test_metrics,
+        "history": history,
+        "checkpoint_path": str(checkpoint_path),
+    }
+
+    metrics_path = results_dir / "metrics.json"
+    predictions_path = results_dir / "predictions.csv"
+    plot_path = results_dir / "pred_plot.png"
+
+    with metrics_path.open("w", encoding="utf-8") as fp:
+        json.dump(metrics_payload, fp, ensure_ascii=False, indent=2)
+
+    predictions_df.to_csv(predictions_path, index=False)
+    save_prediction_plot(predictions_df, plot_path, split_name=reported_split_name, model_label="LSTM Baseline")
+
+    log("\nSaved outputs")
+    log(f"- metrics: {metrics_path}")
+    log(f"- predictions: {predictions_path}")
+    log(f"- plot: {plot_path}")
+    log(f"- checkpoint: {checkpoint_path}")
+
+    all_metrics = reported_metrics["all_timestamps"]
+    daytime_metrics = reported_metrics["daytime_only"]
+    log(f"\nReported metrics ({reported_split_name})")
+    log(
+        "all timestamps | "
+        f"MAE={format_metric_for_console(all_metrics['mae'])} "
+        f"MSE={format_metric_for_console(all_metrics['mse'])} "
+        f"RMSE={format_metric_for_console(all_metrics['rmse'])} "
+        f"MBE={format_metric_for_console(all_metrics['mbe'])} "
+        f"sMAPE={format_metric_for_console(all_metrics['smape'])} "
+        f"MAPE(nonzero)={format_metric_for_console(all_metrics['mape_nonzero'])} "
+        f"WAPE={format_metric_for_console(all_metrics['wape'])} "
+        f"nRMSE(max)={format_metric_for_console(all_metrics['nrmse_by_max'])}"
+    )
+    log(
+        "daytime only  | "
+        f"MAE={format_metric_for_console(daytime_metrics['mae'])} "
+        f"MSE={format_metric_for_console(daytime_metrics['mse'])} "
+        f"RMSE={format_metric_for_console(daytime_metrics['rmse'])} "
+        f"MBE={format_metric_for_console(daytime_metrics['mbe'])} "
+        f"sMAPE={format_metric_for_console(daytime_metrics['smape'])} "
+        f"MAPE(nonzero)={format_metric_for_console(daytime_metrics['mape_nonzero'])} "
+        f"WAPE={format_metric_for_console(daytime_metrics['wape'])} "
+        f"nRMSE(max)={format_metric_for_console(daytime_metrics['nrmse_by_max'])}"
+    )
+
+
 def main() -> None:
     args = parse_args()
+
+    if args.tuning_only and args.report_split != "validation":
+        raise ValueError("--tuning_only requires --report_split validation.")
+    if args.tuning_only and args.eval_checkpoint_path is not None:
+        raise ValueError("--tuning_only cannot be combined with --eval_checkpoint_path.")
+
+    eval_checkpoint: dict[str, Any] | None = None
+    eval_checkpoint_path: Path | None = None
+    if args.eval_checkpoint_path is not None:
+        eval_checkpoint_path = resolve_path(args.eval_checkpoint_path)
+        eval_checkpoint = torch.load(eval_checkpoint_path, map_location="cpu")
+        checkpoint_args = eval_checkpoint.get("args")
+        if checkpoint_args is None:
+            raise KeyError(f"Checkpoint {eval_checkpoint_path} does not contain saved args.")
+        args = build_eval_args_from_checkpoint(args, checkpoint_args)
+
     set_random_seed(args.seed)
     device = get_device(args.device)
 
-    results_dir = PROJECT_ROOT / args.results_dir
-    checkpoint_path = PROJECT_ROOT / args.checkpoint_path
+    if eval_checkpoint is not None:
+        if eval_checkpoint_path is None:
+            raise RuntimeError("eval_checkpoint_path should be resolved before checkpoint evaluation.")
+
+        results_dir = resolve_path(args.results_dir)
+        results_dir.mkdir(parents=True, exist_ok=True)
+
+        include_test = args.report_split == "test"
+        datasets, raw_frames, scalers, expected_delta = prepare_datasets(args, include_test=include_test)
+        print_dataset_summaries(datasets)
+
+        if len(datasets["validation"]) == 0:
+            raise RuntimeError("Validation dataset contains no valid windows. Reduce seq_len/pred_len or inspect segmentation.")
+        if args.report_split == "test" and len(datasets["test"]) == 0:
+            raise RuntimeError("Test dataset contains no valid windows. Reduce seq_len/pred_len or inspect segmentation.")
+
+        model = build_lstm_model(args).to(device)
+        model.load_state_dict(eval_checkpoint["model_state_dict"])
+        model.eval()
+
+        log(f"\nUsing device: {device}")
+        log(f"Results directory: {results_dir}")
+        log(f"Checkpoint path: {eval_checkpoint_path}")
+        evaluate_and_export(
+            args=args,
+            model=model,
+            datasets=datasets,
+            raw_frames=raw_frames,
+            scalers=scalers,
+            expected_delta=expected_delta,
+            results_dir=results_dir,
+            device=device,
+            checkpoint_path=eval_checkpoint_path,
+            best_epoch=int(eval_checkpoint.get("epoch", 0)),
+            best_val_loss=(
+                float(eval_checkpoint.get("best_val_loss"))
+                if eval_checkpoint.get("best_val_loss") is not None
+                else None
+            ),
+            history=[],
+        )
+        return
+
+    results_dir = resolve_path(args.results_dir)
+    checkpoint_path = resolve_path(args.checkpoint_path)
     results_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
-    datasets, raw_frames, scalers, expected_delta = prepare_datasets(args)
+    datasets, raw_frames, scalers, expected_delta = prepare_datasets(args, include_test=not args.tuning_only)
     print_dataset_summaries(datasets)
 
     if len(datasets["train"]) == 0:
         raise RuntimeError("Train dataset contains no valid windows. Reduce seq_len/pred_len or inspect segmentation.")
     if len(datasets["validation"]) == 0:
         raise RuntimeError("Validation dataset contains no valid windows. Reduce seq_len/pred_len or inspect segmentation.")
-    if len(datasets["test"]) == 0:
+    if not args.tuning_only and len(datasets["test"]) == 0:
         raise RuntimeError("Test dataset contains no valid windows. Reduce seq_len/pred_len or inspect segmentation.")
 
     train_loader = create_data_loader(datasets["train"], args.batch_size, True, args.num_workers, device)
     validation_loader = create_data_loader(datasets["validation"], args.batch_size, False, args.num_workers, device)
-    test_loader = create_data_loader(datasets["test"], args.batch_size, False, args.num_workers, device)
 
-    model = LSTMBaseline(
-        input_size=len(args.feature_cols),
-        hidden_size=args.hidden_size,
-        pred_len=args.pred_len,
-        num_layers=args.num_layers,
-        dropout=args.dropout,
-    ).to(device)
-    target_feature_index = int(list(args.feature_cols).index(args.target_col)) if args.target_col in args.feature_cols else None
-    trainable_parameter_count = int(sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
+    model = build_lstm_model(args).to(device)
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -784,103 +1032,19 @@ def main() -> None:
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
-    validation_prediction_dict = collect_predictions(
+    evaluate_and_export(
+        args=args,
         model=model,
-        loader=validation_loader,
-        target_scaler=scalers.target_scaler,
+        datasets=datasets,
+        raw_frames=raw_frames,
+        scalers=scalers,
+        expected_delta=expected_delta,
+        results_dir=results_dir,
         device=device,
-        split_name="validation",
-        progress_mininterval=args.progress_mininterval,
-        max_batches=args.max_eval_batches,
-    )
-    validation_metrics = evaluate_prediction_arrays(
-        y_true=validation_prediction_dict["y_true"],
-        y_pred=validation_prediction_dict["y_pred"],
-        day_night_label=validation_prediction_dict["target_day_night"],
-    )
-
-    test_prediction_dict = collect_predictions(
-        model=model,
-        loader=test_loader,
-        target_scaler=scalers.target_scaler,
-        device=device,
-        split_name="test",
-        progress_mininterval=args.progress_mininterval,
-        max_batches=args.max_eval_batches,
-    )
-    test_metrics = evaluate_prediction_arrays(
-        y_true=test_prediction_dict["y_true"],
-        y_pred=test_prediction_dict["y_pred"],
-        day_night_label=test_prediction_dict["target_day_night"],
-    )
-    predictions_df = build_prediction_dataframe(
-        prediction_dict=test_prediction_dict,
-        target_timezone=datasets["test"].timezone,
-    )
-
-    metrics_payload = {
-        "config": vars(args),
-        "experiment_name": None,
-        "tuning_stage": None,
-        "device": str(device),
-        "baseline_type": "lstm",
-        "baseline_definition": "Sequence-to-vector LSTM that maps the last encoder hidden state to future Active_Pow horizons.",
-        "best_epoch": best_epoch,
-        "best_validation_loss": best_val_loss,
-        "expected_delta_minutes": float(expected_delta / pd.Timedelta(minutes=1)),
-        "dataset_summary": {split_name: dataset.summary() for split_name, dataset in datasets.items()},
-        "raw_split_rows": {split_name: int(len(df)) for split_name, df in raw_frames.items()},
-        "target_feature_index": target_feature_index,
-        "report_split": "test",
-        "calibration_usage": "loaded_but_unused",
-        "trainable_parameter_count": trainable_parameter_count,
-        "validation_metrics": validation_metrics,
-        "reported_metrics": test_metrics,
-        "test_metrics": test_metrics,
-        "history": history,
-        "checkpoint_path": str(checkpoint_path),
-    }
-
-    metrics_path = results_dir / "metrics.json"
-    predictions_path = results_dir / "predictions.csv"
-    plot_path = results_dir / "pred_plot.png"
-
-    with metrics_path.open("w", encoding="utf-8") as fp:
-        json.dump(metrics_payload, fp, ensure_ascii=False, indent=2)
-
-    predictions_df.to_csv(predictions_path, index=False)
-    save_prediction_plot(predictions_df, plot_path, split_name="test", model_label="LSTM Baseline")
-
-    log("\nSaved outputs")
-    log(f"- metrics: {metrics_path}")
-    log(f"- predictions: {predictions_path}")
-    log(f"- plot: {plot_path}")
-    log(f"- checkpoint: {checkpoint_path}")
-
-    all_metrics = test_metrics["all_timestamps"]
-    daytime_metrics = test_metrics["daytime_only"]
-    log("\nTest metrics")
-    log(
-        "all timestamps | "
-        f"MAE={format_metric_for_console(all_metrics['mae'])} "
-        f"MSE={format_metric_for_console(all_metrics['mse'])} "
-        f"RMSE={format_metric_for_console(all_metrics['rmse'])} "
-        f"MBE={format_metric_for_console(all_metrics['mbe'])} "
-        f"sMAPE={format_metric_for_console(all_metrics['smape'])} "
-        f"MAPE(nonzero)={format_metric_for_console(all_metrics['mape_nonzero'])} "
-        f"WAPE={format_metric_for_console(all_metrics['wape'])} "
-        f"nRMSE(max)={format_metric_for_console(all_metrics['nrmse_by_max'])}"
-    )
-    log(
-        "daytime only  | "
-        f"MAE={format_metric_for_console(daytime_metrics['mae'])} "
-        f"MSE={format_metric_for_console(daytime_metrics['mse'])} "
-        f"RMSE={format_metric_for_console(daytime_metrics['rmse'])} "
-        f"MBE={format_metric_for_console(daytime_metrics['mbe'])} "
-        f"sMAPE={format_metric_for_console(daytime_metrics['smape'])} "
-        f"MAPE(nonzero)={format_metric_for_console(daytime_metrics['mape_nonzero'])} "
-        f"WAPE={format_metric_for_console(daytime_metrics['wape'])} "
-        f"nRMSE(max)={format_metric_for_console(daytime_metrics['nrmse_by_max'])}"
+        checkpoint_path=checkpoint_path,
+        best_epoch=best_epoch,
+        best_val_loss=best_val_loss,
+        history=history,
     )
 
 
