@@ -1,7 +1,0 @@
-# 此文件仅用于保持目录存在
-# PCMCI 生成的因果图会保存在这里:
-#   - heatmap_Spring.png  : 春季因果关系热力图
-#   - heatmap_Summer.png  : 夏季因果关系热力图
-#   - heatmap_Autumn.png  : 秋季因果关系热力图
-#   - heatmap_Winter.png  : 冬季因果关系热力图
-#   - mask_*.npy          : 各季节因果掩码矩阵（供 iTransformer 使用）

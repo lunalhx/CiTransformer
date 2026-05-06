@@ -1,0 +1,122 @@
+{
+  "input_path": "/Users/lunalhx/Desktop/202509/CiTransformer/data/raw/91-Site_DKA-M9_B-Phase.csv",
+  "output_dir": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_selected_2020_2022",
+  "site": {
+    "latitude": -23.762,
+    "longitude": 133.875,
+    "altitude_m": 546.0,
+    "timezone": "Australia/Darwin",
+    "day_night_elevation_threshold_deg": 5.0,
+    "solar_position_method": "pvlib"
+  },
+  "selection": {
+    "input_rows_total": 1250668,
+    "invalid_timestamp_rows_dropped": 0,
+    "selected_start": "2020-01-01 00:00:00",
+    "selected_end": "2022-12-31 23:55:00",
+    "selected_rows": 308822,
+    "selected_first_timestamp": "2020-01-01 00:00:00",
+    "selected_last_timestamp": "2022-12-31 23:55:00",
+    "duplicate_timestamp_rows": 0
+  },
+  "sampling": {
+    "expected_delta": "0 days 00:05:00",
+    "expected_delta_minutes": 5.0,
+    "timestamp_diff_count": 308821,
+    "expected_delta_count": 308789,
+    "expected_delta_ratio_pct": 99.98963801036847,
+    "irregular_delta_count": 32,
+    "larger_than_expected_gap_count": 32,
+    "estimated_missing_timestamp_steps": 6826
+  },
+  "feature_columns": [
+    "Active_Pow",
+    "Radiation_Global_Tilted",
+    "Radiation_Diffuse_Tilted",
+    "Weather_T",
+    "Weather_R",
+    "solar_elevation",
+    "sin_time_of_day",
+    "cos_time_of_day",
+    "sin_day_of_year",
+    "cos_day_of_year",
+    "day_night_label"
+  ],
+  "target_column": "Active_Pow",
+  "split_strategy": "calendar",
+  "split_bounds": {
+    "train": [
+      "2020-01-01 00:00:00",
+      "2020-12-31 23:55:00"
+    ],
+    "validation": [
+      "2021-01-01 00:00:00",
+      "2021-06-30 23:55:00"
+    ],
+    "calibration": [
+      "2021-07-01 00:00:00",
+      "2021-12-31 23:55:00"
+    ],
+    "test": [
+      "2022-01-01 00:00:00",
+      "2022-12-31 23:55:00"
+    ]
+  },
+  "cleaning": {
+    "rows_before_clean_drop": 308822,
+    "rows_dropped_after_gap_rules": 4289,
+    "rows_after_cleaning": 304533,
+    "remaining_missing_values": 0,
+    "nighttime_rows": 164749,
+    "power_clip_range": [
+      0.0,
+      11.55
+    ],
+    "irradiance_clip_range": [
+      0.0,
+      1300.0
+    ]
+  },
+  "split_summary": [
+    {
+      "split": "train",
+      "row_count": 103619,
+      "actual_ratio_pct": 34.02554074599469,
+      "start_time": "2020-01-01 00:00:00+09:30",
+      "end_time": "2020-12-31 23:55:00+09:30",
+      "missing_values": 0
+    },
+    {
+      "split": "validation",
+      "row_count": 47165,
+      "actual_ratio_pct": 15.48764830084096,
+      "start_time": "2021-01-01 00:00:00+09:30",
+      "end_time": "2021-06-30 23:55:00+09:30",
+      "missing_values": 0
+    },
+    {
+      "split": "calibration",
+      "row_count": 51804,
+      "actual_ratio_pct": 17.010964328988976,
+      "start_time": "2021-07-01 00:00:00+09:30",
+      "end_time": "2021-12-31 23:55:00+09:30",
+      "missing_values": 0
+    },
+    {
+      "split": "test",
+      "row_count": 101945,
+      "actual_ratio_pct": 33.475846624175375,
+      "start_time": "2022-01-01 00:00:00+09:30",
+      "end_time": "2022-12-31 23:55:00+09:30",
+      "missing_values": 0
+    }
+  ],
+  "outputs": {
+    "selected_raw": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_selected_2020_2022/selected_raw_2020_2022.csv",
+    "nighttime_labeled": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_selected_2020_2022/nighttime_labeled_2020_2022.csv",
+    "core_features_before_clean": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_selected_2020_2022/core_features_before_clean.csv",
+    "core_features_clean": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_selected_2020_2022/core_features_clean.csv",
+    "splits": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_selected_2020_2022/splits",
+    "audit": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_selected_2020_2022/audit"
+  }
+}
