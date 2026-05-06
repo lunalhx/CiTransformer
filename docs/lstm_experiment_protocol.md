@@ -31,6 +31,13 @@
 - 训练与测试入口：`scripts/run_lstm.py`
 - 数据集与标准化：`utils/datasets.py`
 
+当前 `scripts/run_lstm.py` 还支持两个协议内的辅助模式：
+
+- `--tuning_only --report_split validation`：只加载 train/validation/calibration，不加载 test，用于 validation-only 调参
+- `--eval_checkpoint_path <best_model.pth>`：跳过训练，直接从已有 checkpoint 导出 validation 或 test 结果
+
+默认批量脚本 `scripts/run_lstm_experiments.sh` 不使用这些辅助模式，仍然走正式 baseline 的 train -> validation checkpoint -> test export 流程。
+
 ## 2. train / validation / test / calibration 分别怎么用
 
 当前代码里这 4 个 split 的用途如下：
@@ -47,6 +54,7 @@
   - 只在训练结束后使用一次
   - 代码会先重新加载“验证集上最优”的 checkpoint，再在 test 上做推理
   - test 指标会保存到 `results/.../metrics.json`
+  - 如果显式使用 `--tuning_only --report_split validation`，则不加载 test，也不会导出 `test_metrics`
 - `calibration`
   - 会被读取，也会参与数据统计
   - 但当前这版 LSTM baseline 不参与训练
