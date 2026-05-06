@@ -34,6 +34,7 @@ from tigramite.independence_tests.parcorr import ParCorr
 from tigramite.pcmci import PCMCI
 
 from utils.datasets import (
+    DEFAULT_DATA_DIR,
     DEFAULT_FEATURE_COLUMNS,
     build_segment_boundaries,
     infer_expected_timedelta,
@@ -42,7 +43,7 @@ from utils.datasets import (
 
 
 CI_TEST_NAME = "ParCorr(significance='analytic')"
-DEFAULT_TRAIN_PATH = "data/processed/splits/train.csv"
+DEFAULT_TRAIN_PATH = f"{DEFAULT_DATA_DIR}/splits/train.csv"
 DEFAULT_OUTPUT_DIR = "results/causal_graphs/static"
 FULL_FEATURE_COLUMNS = list(DEFAULT_FEATURE_COLUMNS)
 ACTIVE_POW_COLUMN = "Active_Pow"

@@ -1,5 +1,7 @@
 # LSTM 实验流程说明
 
+本实验协议从属于统一协议：`docs/实验协议.md`。后续横向对比默认以统一协议中的数据来源、split、`seq_len/pred_len`、指标和导出结构为准；如有偏离，必须在本文件或对应实验记录里单独说明。
+
 ## 1. 当前这个实验在做什么
 
 这个仓库里的 LSTM baseline 是通过 `scripts/run_lstm_experiments.sh` 统一调用 `scripts/run_lstm.py` 来运行的，当前会分别跑 4 组预测步长：
@@ -74,7 +76,7 @@
 
 当前提交到仓库里的实验脚本，默认参数定义在 `scripts/run_lstm_experiments.sh`，主要设置如下：
 
-- `DATA_DIR=data/processed`
+- `DATA_DIR=data/processed_selected_2020_2022`
 - `SEQ_LEN=96`
 - `PRED_LENS=1 12 24 48`
 - `BATCH_SIZE=256`
@@ -118,16 +120,25 @@
 
 - 训练和验证阶段的 `loss`
   - 使用的是标准化目标值上的 `nn.MSELoss()`
-- `metrics.json` 里的测试指标
+- `metrics.json` 里的 validation/test 指标
   - 使用的是反归一化后的预测值和原始真实值来计算
   - 因此它们是在原始 `Active_Pow` 功率尺度上汇报的
 
 这意味着：
 
 - `history.train_loss` 和 `history.validation_loss`
-- 不能直接和最终 `test_metrics.mse` 做数值比较
+- 不能直接和最终 `validation_metrics` / `test_metrics` 里的原始量纲指标做数值比较
 
 如果后面写论文，这两类数不能混着解释成同一个量纲。
+
+当前导出的指标已经扩展到统一协议要求的完整 PV 误差集合，包括：
+
+- `MAE / MSE / RMSE`
+- `MBE`
+- `MedianAE / P95AE / MaxAE`
+- `sMAPE / MAPE(nonzero) / WAPE`
+- `nMAE / nRMSE / nMBE`，分别按 `mean(abs(y_true))` 和 `max(abs(y_true))` 两套口径归一化
+- `R2 / Pearson_r`
 
 ## 5. 当前已经得到的结果
 

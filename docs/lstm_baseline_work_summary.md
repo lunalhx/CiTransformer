@@ -201,24 +201,17 @@
 
 ## 4. 数据路径与兼容方式
 
-脚本默认读取：
+脚本默认读取 2020-2022 年选定光伏数据集：
 
-- `data/processed/train.csv`
-- `data/processed/validation.csv`
-- `data/processed/calibration.csv`
-- `data/processed/test.csv`
-
-但当前仓库实际数据位于：
-
-- `data/processed/splits/train.csv`
-- `data/processed/splits/validation.csv`
-- `data/processed/splits/calibration.csv`
-- `data/processed/splits/test.csv`
+- `data/processed_selected_2020_2022/splits/train.csv`
+- `data/processed_selected_2020_2022/splits/validation.csv`
+- `data/processed_selected_2020_2022/splits/calibration.csv`
+- `data/processed_selected_2020_2022/splits/test.csv`
 
 我已经在代码里做了兼容：
 
-- 如果 `data/processed/` 下直接存在四个 split 文件，就读取那里
-- 否则自动回退到 `data/processed/splits/`
+- 如果 `data_dir/` 下直接存在四个 split 文件，就读取那里
+- 否则自动回退到 `data_dir/splits/`
 
 因此当前仓库可以直接运行，不需要你手动改路径。
 

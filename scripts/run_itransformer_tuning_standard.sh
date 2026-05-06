@@ -12,6 +12,7 @@ PLAN="${PLAN:-standard}"
 MAIN_PRED_LENS="${MAIN_PRED_LENS:-12 24 48}"
 RUN_PRED_LEN1_REF="${RUN_PRED_LEN1_REF:-1}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
+DATA_DIR="${DATA_DIR:-data/processed_selected_2020_2022}"
 
 # Training defaults for the formal tuning round.
 SEQ_LEN="${SEQ_LEN:-96}"
@@ -30,6 +31,7 @@ export PLAN
 export MAIN_PRED_LENS
 export RUN_PRED_LEN1_REF
 export SKIP_EXISTING
+export DATA_DIR
 export SEQ_LEN
 export EPOCHS
 export PATIENCE

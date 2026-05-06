@@ -1,5 +1,7 @@
 # iTransformer 实验流程说明
 
+本实验协议从属于统一协议：`docs/实验协议.md`。后续横向对比默认以统一协议中的数据来源、split、`seq_len/pred_len`、指标和导出结构为准；如有偏离，必须在本文件或对应实验记录里单独说明。
+
 ## 1. 当前这个实验在做什么
 
 这个仓库里的 iTransformer baseline 目前分成两条相关但用途不同的实验链路：
@@ -116,6 +118,7 @@
 
 普通 baseline 批量脚本 `scripts/run_itransformer_experiments.sh` 的默认超参数如下：
 
+- `DATA_DIR=data/processed_selected_2020_2022`
 - `SEQ_LEN=96`
 - `PRED_LENS=1 12 24 48`
 - `BATCH_SIZE=256`
@@ -171,7 +174,18 @@
 2. 再把每个配置的 validation 指标汇总起来
 3. 用 daytime 优先的排序规则决定哪组超参数最好
 
-最终 `metrics.json` 里的 `reported_metrics` 和 `test_metrics` 都是在 **反归一化后的真实功率尺度** 上计算的，这些数值可以直接用于论文汇报。
+最终 `metrics.json` 里的 `validation_metrics`、`reported_metrics` 和 `test_metrics` 都是在 **反归一化后的真实功率尺度** 上计算的，这些数值可以直接用于论文汇报。
+
+当前导出的指标已经扩展到统一协议要求的完整 PV 误差集合，包括：
+
+- `MAE / MSE / RMSE`
+- `MBE`
+- `MedianAE / P95AE / MaxAE`
+- `sMAPE / MAPE(nonzero) / WAPE`
+- `nMAE / nRMSE / nMBE`，分别按 `mean(abs(y_true))` 和 `max(abs(y_true))` 两套口径归一化
+- `R2 / Pearson_r`
+
+调参排序仍默认沿用 daytime RMSE/MAE 作为主排序口径；新增指标会进入 `metrics.json` 和 tuning summary，供后续筛选模型优势维度时使用。
 
 ## 7. 正式调参流程是什么
 

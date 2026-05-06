@@ -46,6 +46,27 @@ BEST_TSV_FIELDS = [
     "seed",
 ]
 
+METRIC_FIELDS = [
+    "mae",
+    "mse",
+    "rmse",
+    "mbe",
+    "median_ae",
+    "p95_ae",
+    "max_ae",
+    "smape",
+    "mape_nonzero",
+    "wape",
+    "nmae_by_mean",
+    "nrmse_by_mean",
+    "nmbe_by_mean",
+    "nmae_by_max",
+    "nrmse_by_max",
+    "nmbe_by_max",
+    "r2",
+    "pearson_r",
+]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -125,6 +146,16 @@ def build_signature(config: dict[str, Any]) -> str:
     return "|".join(parts)
 
 
+def add_metric_columns(row: dict[str, Any], prefix: str, metrics: dict[str, Any]) -> None:
+    for scope_key, scope_label in (("all_timestamps", "all"), ("daytime_only", "daytime")):
+        for metric_name in METRIC_FIELDS:
+            row[f"{prefix}_{scope_label}_{metric_name}"] = get_nested_metric(
+                metrics,
+                scope_key,
+                metric_name,
+            )
+
+
 def collect_rows(root_dir: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for metrics_path in sorted(root_dir.rglob("metrics.json")):
@@ -146,14 +177,8 @@ def collect_rows(root_dir: Path) -> list[dict[str, Any]]:
             row[field] = config.get(field)
         row["pred_len"] = config.get("pred_len")
 
-        row["val_all_mae"] = get_nested_metric(validation_metrics, "all_timestamps", "mae")
-        row["val_all_rmse"] = get_nested_metric(validation_metrics, "all_timestamps", "rmse")
-        row["val_daytime_mae"] = get_nested_metric(validation_metrics, "daytime_only", "mae")
-        row["val_daytime_rmse"] = get_nested_metric(validation_metrics, "daytime_only", "rmse")
-        row["test_all_mae"] = get_nested_metric(payload, "test_metrics", "all_timestamps", "mae")
-        row["test_all_rmse"] = get_nested_metric(payload, "test_metrics", "all_timestamps", "rmse")
-        row["test_daytime_mae"] = get_nested_metric(payload, "test_metrics", "daytime_only", "mae")
-        row["test_daytime_rmse"] = get_nested_metric(payload, "test_metrics", "daytime_only", "rmse")
+        add_metric_columns(row, "val", validation_metrics)
+        add_metric_columns(row, "test", payload.get("test_metrics") or {})
 
         rows.append(row)
     return rows

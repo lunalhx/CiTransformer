@@ -66,7 +66,7 @@ if [[ "${PLAN}" != "minimal" && "${PLAN}" != "standard" ]]; then
   exit 1
 fi
 
-DATA_DIR="${DATA_DIR:-data/processed}"
+DATA_DIR="${DATA_DIR:-data/processed_selected_2020_2022}"
 SEQ_LEN="${SEQ_LEN:-96}"
 MAIN_PRED_LENS="${MAIN_PRED_LENS:-12 24 48}"
 RUN_PRED_LEN1_REF="${RUN_PRED_LEN1_REF:-1}"
