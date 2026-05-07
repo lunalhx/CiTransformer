@@ -402,6 +402,40 @@ def create_data_loader(dataset: ContinuousSegmentTimeSeriesDataset, batch_size: 
     )
 
 
+def get_learning_rate(optimizer: torch.optim.Optimizer) -> float:
+    return float(optimizer.param_groups[0]["lr"])
+
+
+def compute_target_daytime_ratio(dataset: ContinuousSegmentTimeSeriesDataset) -> float | None:
+    total_points = 0
+    daytime_points = 0
+
+    for segment_start, segment_length in zip(dataset.valid_segment_starts, dataset.valid_segment_lengths, strict=True):
+        window_count = int(segment_length - dataset.seq_len - dataset.pred_len + 1)
+        if window_count <= 0:
+            continue
+
+        for offset in range(window_count):
+            target_start = int(segment_start + offset + dataset.seq_len)
+            target_end = target_start + dataset.pred_len
+            target_day = dataset.day_night_label[target_start:target_end]
+            daytime_points += int(np.sum(target_day == 1))
+            total_points += int(dataset.pred_len)
+
+    if total_points == 0:
+        return None
+    return float(daytime_points / total_points)
+
+
+def build_training_run_stats(datasets: dict[str, ContinuousSegmentTimeSeriesDataset]) -> dict[str, int | float | None]:
+    return {
+        "train_sample_count": int(len(datasets["train"])),
+        "val_sample_count": int(len(datasets["validation"])),
+        "train_daytime_ratio": compute_target_daytime_ratio(datasets["train"]),
+        "val_daytime_ratio": compute_target_daytime_ratio(datasets["validation"]),
+    }
+
+
 def move_batch_to_device(batch: dict[str, torch.Tensor], device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
     x = batch["x"].to(device=device, dtype=torch.float32)
     y = batch["y"].to(device=device, dtype=torch.float32)
@@ -755,7 +789,8 @@ def evaluate_and_export(
     checkpoint_path: Path,
     best_epoch: int,
     best_val_loss: float | None,
-    history: list[dict[str, float | int]],
+    history: list[dict[str, float | int | None]],
+    training_run_stats: dict[str, int | float | None],
 ) -> None:
     target_feature_index = int(list(args.feature_cols).index(args.target_col)) if args.target_col in args.feature_cols else None
     trainable_parameter_count = int(sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
@@ -819,6 +854,7 @@ def evaluate_and_export(
         "best_validation_loss": best_val_loss,
         "expected_delta_minutes": float(expected_delta / pd.Timedelta(minutes=1)),
         "dataset_summary": {split_name: dataset.summary() for split_name, dataset in datasets.items()},
+        "training_run_stats": training_run_stats,
         "raw_split_rows": {split_name: int(len(df)) for split_name, df in raw_frames.items()},
         "target_feature_index": target_feature_index,
         "report_split": args.report_split,
@@ -935,6 +971,7 @@ def main() -> None:
                 else None
             ),
             history=[],
+            training_run_stats=build_training_run_stats(datasets),
         )
         return
 
@@ -955,6 +992,7 @@ def main() -> None:
 
     train_loader = create_data_loader(datasets["train"], args.batch_size, True, args.num_workers, device)
     validation_loader = create_data_loader(datasets["validation"], args.batch_size, False, args.num_workers, device)
+    training_run_stats = build_training_run_stats(datasets)
 
     model = build_lstm_model(args).to(device)
     criterion = nn.MSELoss()
@@ -965,7 +1003,7 @@ def main() -> None:
     )
     early_stopping = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
 
-    history: list[dict[str, float | int]] = []
+    history: list[dict[str, float | int | None]] = []
     best_val_loss = math.inf
     best_epoch = 0
 
@@ -997,15 +1035,6 @@ def main() -> None:
             max_batches=args.max_eval_batches,
         )
 
-        history.append(
-            {
-                "epoch": epoch,
-                "train_loss": float(train_loss),
-                "validation_loss": float(val_loss),
-            }
-        )
-        log(f"Epoch {epoch:03d} | train_loss={train_loss:.6f} | val_loss={val_loss:.6f}")
-
         if val_loss < best_val_loss - args.min_delta:
             best_val_loss = float(val_loss)
             best_epoch = epoch
@@ -1022,7 +1051,26 @@ def main() -> None:
                 feature_cols=list(args.feature_cols),
             )
 
-        if early_stopping.step(val_loss):
+        should_stop = early_stopping.step(val_loss)
+        history.append(
+            {
+                "epoch": epoch,
+                "train_loss": float(train_loss),
+                "validation_loss": float(val_loss),
+                "best_epoch": int(best_epoch),
+                "best_validation_loss": float(best_val_loss),
+                "patience_counter": int(early_stopping.counter),
+                "learning_rate": get_learning_rate(optimizer),
+                **training_run_stats,
+            }
+        )
+        log(
+            f"Epoch {epoch:03d} | train_loss={train_loss:.6f} | val_loss={val_loss:.6f} "
+            f"| best_epoch={best_epoch} | best_val_loss={best_val_loss:.6f} "
+            f"| patience_counter={early_stopping.counter} | lr={get_learning_rate(optimizer):.6g}"
+        )
+
+        if should_stop:
             log(f"Early stopping triggered at epoch {epoch}.")
             break
 
@@ -1045,6 +1093,7 @@ def main() -> None:
         best_epoch=best_epoch,
         best_val_loss=best_val_loss,
         history=history,
+        training_run_stats=training_run_stats,
     )
 
 

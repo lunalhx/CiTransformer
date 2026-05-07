@@ -292,7 +292,56 @@ The LSTM baseline is trained only on the training split, with the validation spl
 
 需要注意：当前 best checkpoint 的选择依据是标准化目标空间上的全时段 validation MSE，并不是 daytime-only validation MAE/RMSE。如果论文主线更强调白天预测质量，后续可以考虑按 daytime validation 指标选择 checkpoint。
 
-## 14. 当前结论
+## 14. 补充实验：lr=3e-4, epochs=60, patience=12
+
+为避免覆盖第 7-13 节记录的默认参数实验，当前补充实验单独输出到新的结果目录：
+
+```bash
+cd /home/lunalhx/projects/CiTransformer
+LEARNING_RATE=3e-4 \
+EPOCHS=60 \
+PATIENCE=12 \
+RESULTS_BASE_DIR=results/lstm_lr3e4 \
+CHECKPOINT_BASE_DIR=checkpoints/lstm_lr3e4 \
+bash scripts/run_lstm_experiments.sh
+```
+
+本轮实验与默认 LSTM baseline 保持相同的数据、split、特征、模型宽度和 batch size，只调整训练超参数：
+
+| 参数 | 默认实验 | 补充实验 |
+| --- | ---: | ---: |
+| `LEARNING_RATE` | `1e-3` | `3e-4` |
+| `EPOCHS` | `30` | `60` |
+| `PATIENCE` | `8` | `12` |
+| `SEQ_LEN` | `96` | `96` |
+| `BATCH_SIZE` | `256` | `256` |
+| `HIDDEN_SIZE` | `128` | `128` |
+| `NUM_LAYERS` | `2` | `2` |
+| `DROPOUT` | `0.1` | `0.1` |
+| `WEIGHT_DECAY` | `1e-5` | `1e-5` |
+| `SEED` | `42` | `42` |
+
+输出文件如下：
+
+| pred_len | metrics | predictions | plot | checkpoint |
+| ---: | --- | --- | --- | --- |
+| 1 | `results/lstm_lr3e4/pred_len_1/metrics.json` | `results/lstm_lr3e4/pred_len_1/predictions.csv` | `results/lstm_lr3e4/pred_len_1/pred_plot.png` | `checkpoints/lstm_lr3e4/pred_len_1/best_model.pth` |
+| 12 | `results/lstm_lr3e4/pred_len_12/metrics.json` | `results/lstm_lr3e4/pred_len_12/predictions.csv` | `results/lstm_lr3e4/pred_len_12/pred_plot.png` | `checkpoints/lstm_lr3e4/pred_len_12/best_model.pth` |
+| 24 | `results/lstm_lr3e4/pred_len_24/metrics.json` | `results/lstm_lr3e4/pred_len_24/predictions.csv` | `results/lstm_lr3e4/pred_len_24/pred_plot.png` | `checkpoints/lstm_lr3e4/pred_len_24/best_model.pth` |
+| 48 | `results/lstm_lr3e4/pred_len_48/metrics.json` | `results/lstm_lr3e4/pred_len_48/predictions.csv` | `results/lstm_lr3e4/pred_len_48/pred_plot.png` | `checkpoints/lstm_lr3e4/pred_len_48/best_model.pth` |
+
+核心结果如下。完整逐 horizon 和完整聚合指标以各 `metrics.json` 为准。
+
+| pred_len | best_epoch | total_epochs | best_validation_loss | val all MAE | val all RMSE | val daytime MAE | val daytime RMSE | test all MAE | test all RMSE | test daytime MAE | test daytime RMSE | test all R2 | test daytime R2 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 20 | 32 | 0.021949 | 0.162750 | 0.417083 | 0.334435 | 0.614583 | 0.177176 | 0.434688 | 0.360306 | 0.634857 | 0.976180 | 0.928470 |
+| 12 | 7 | 19 | 0.049505 | 0.281503 | 0.626384 | 0.582932 | 0.924415 | 0.313850 | 0.667406 | 0.641671 | 0.974316 | 0.943852 | 0.831555 |
+| 24 | 6 | 18 | 0.060558 | 0.333808 | 0.692793 | 0.677195 | 1.016859 | 0.367143 | 0.743417 | 0.739750 | 1.082560 | 0.930333 | 0.792102 |
+| 48 | 4 | 16 | 0.076215 | 0.390428 | 0.777209 | 0.783919 | 1.140289 | 0.435604 | 0.857477 | 0.868246 | 1.247893 | 0.907300 | 0.723794 |
+
+与默认实验相比，本轮 `lr=3e-4` 在 `pred_len=12` 的 test 指标上略有改善，`pred_len=24` 的 test daytime RMSE 也略低；但 `pred_len=1` 和 `pred_len=48` 的 daytime RMSE 没有优于默认实验。整体看，这组参数可以作为补充对照，但不应直接替代默认 LSTM baseline 的全部结果。
+
+## 15. 当前结论
 
 本次 LSTM baseline 已经按 `pred_len=1/12/24/48` 全部跑完，且四组输出完整。
 

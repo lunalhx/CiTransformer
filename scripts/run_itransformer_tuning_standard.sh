@@ -16,8 +16,8 @@ DATA_DIR="${DATA_DIR:-data/processed_selected_2020_2022}"
 
 # Training defaults for the formal tuning round.
 SEQ_LEN="${SEQ_LEN:-96}"
-EPOCHS="${EPOCHS:-30}"
-PATIENCE="${PATIENCE:-8}"
+EPOCHS="${EPOCHS:-80}"
+PATIENCE="${PATIENCE:-15}"
 MIN_DELTA="${MIN_DELTA:-1e-5}"
 GRAD_CLIP="${GRAD_CLIP:-1.0}"
 LOG_INTERVAL="${LOG_INTERVAL:-0}"
