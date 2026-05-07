@@ -83,6 +83,7 @@ class Model(nn.Module):
         x_mark_enc: torch.Tensor | None,
         x_dec: torch.Tensor | None,
         x_mark_dec: torch.Tensor | None,
+        attn_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor | None]]:
         del x_dec, x_mark_dec
 
@@ -97,7 +98,7 @@ class Model(nn.Module):
 
         _, _, feature_dim = x_enc.shape
         enc_out = self.enc_embedding(x_enc, x_mark_enc)
-        enc_out, attns = self.encoder(enc_out, attn_mask=None)
+        enc_out, attns = self.encoder(enc_out, attn_mask=attn_mask)
         dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :feature_dim]
 
         if self.use_norm and means is not None and stdev is not None:
@@ -114,8 +115,7 @@ class Model(nn.Module):
         x_mark_dec: torch.Tensor | None,
         mask: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor | None]]:
-        del mask
-        dec_out, attns = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        dec_out, attns = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec, attn_mask=mask)
 
         if self.output_attention:
             return dec_out[:, -self.pred_len :, :], attns
@@ -155,6 +155,7 @@ class ITransformerBaseline(nn.Module):
         activation: str = "gelu",
         output_attention: bool = False,
         use_norm: bool = True,
+        causal_attention_mask: torch.Tensor | None = None,
     ) -> None:
         super().__init__()
 
@@ -201,6 +202,15 @@ class ITransformerBaseline(nn.Module):
         self.register_buffer("feature_scale", torch.tensor(float(feature_scale), dtype=torch.float32))
         self.register_buffer("target_mean", torch.tensor(float(target_mean), dtype=torch.float32))
         self.register_buffer("target_scale", torch.tensor(float(target_scale), dtype=torch.float32))
+        if causal_attention_mask is not None:
+            if causal_attention_mask.ndim != 2:
+                raise ValueError(
+                    "causal_attention_mask must have shape [feature_dim, feature_dim], "
+                    f"got {tuple(causal_attention_mask.shape)}."
+                )
+            self.register_buffer("causal_attention_mask", causal_attention_mask.to(dtype=torch.float32))
+        else:
+            self.causal_attention_mask = None
 
     def forward(
         self,
@@ -222,7 +232,7 @@ class ITransformerBaseline(nn.Module):
             x_mark_enc=x_mark_enc,
             x_dec=x_dec,
             x_mark_dec=x_mark_dec,
-            mask=mask,
+            mask=self.causal_attention_mask if mask is None else mask,
         )
         if isinstance(backbone_output, tuple):
             multivariate_prediction = backbone_output[0]

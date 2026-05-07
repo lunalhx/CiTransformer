@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import torch
 from torch import nn
@@ -82,6 +83,15 @@ def parse_args() -> argparse.Namespace:
         help="Compute attention maps inside iTransformer. Training still uses only the forecast tensor.",
     )
     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout used in attention and FFN blocks.")
+    parser.add_argument(
+        "--causal_graph_dir",
+        type=str,
+        default=None,
+        help=(
+            "Optional directory containing global_causal_adjacency.csv. When provided, the 2D variable-level "
+            "causal mask is injected into iTransformer attention."
+        ),
+    )
 
     parser.add_argument("--epochs", type=int, default=30, help="Maximum training epochs.")
     parser.add_argument("--batch_size", type=int, default=256, help="Mini-batch size.")
@@ -180,9 +190,63 @@ def get_target_feature_index(feature_cols: list[str], target_col: str) -> int:
     return int(feature_cols.index(target_col))
 
 
+def load_causal_attention_mask(
+    causal_graph_dir: str | None,
+    feature_cols: list[str],
+) -> tuple[torch.Tensor | None, dict[str, Any] | None]:
+    if causal_graph_dir is None:
+        return None, None
+
+    graph_dir = resolve_path(causal_graph_dir)
+    adjacency_path = graph_dir / "global_causal_adjacency.csv"
+    if not adjacency_path.exists():
+        raise FileNotFoundError(f"Cannot find causal adjacency file: {adjacency_path}")
+
+    adjacency = pd.read_csv(adjacency_path, index_col=0)
+    adjacency.index = adjacency.index.astype(str)
+    adjacency.columns = adjacency.columns.astype(str)
+
+    expected_order = list(feature_cols)
+    index_order = list(adjacency.index)
+    column_order = list(adjacency.columns)
+    if index_order != expected_order or column_order != expected_order:
+        raise ValueError(
+            "Causal adjacency variables must exactly match --feature_cols order.\n"
+            f"Expected: {expected_order}\n"
+            f"Rows:     {index_order}\n"
+            f"Columns:  {column_order}"
+        )
+
+    matrix = adjacency.to_numpy(dtype=np.float32)
+    if matrix.shape != (len(expected_order), len(expected_order)):
+        raise ValueError(
+            f"Causal adjacency must have shape {(len(expected_order), len(expected_order))}, got {matrix.shape}."
+        )
+    if not np.isfinite(matrix).all():
+        raise ValueError(f"Causal adjacency contains non-finite values: {adjacency_path}")
+    if np.any(np.diag(matrix) <= 0.0):
+        raise ValueError("Causal adjacency diagonal must be positive so every variable can attend to itself.")
+
+    additive_mask = np.where(matrix > 0.0, 0.0, -1e9).astype(np.float32)
+    allowed_positions = int(np.sum(matrix > 0.0))
+    total_positions = int(matrix.size)
+    metadata = {
+        "causal_graph_dir": str(graph_dir),
+        "causal_adjacency_path": str(adjacency_path),
+        "feature_order": expected_order,
+        "mask_shape": [int(matrix.shape[0]), int(matrix.shape[1])],
+        "allowed_attention_positions": allowed_positions,
+        "total_attention_positions": total_positions,
+        "mask_density": float(allowed_positions / total_positions),
+        "mask_format": "additive attention mask, 0.0=allowed, -1e9=blocked",
+    }
+    return torch.from_numpy(additive_mask), metadata
+
+
 def build_itransformer_model(args: argparse.Namespace, scalers: Any) -> ITransformerBaseline:
     feature_cols = list(args.feature_cols)
     target_feature_index = get_target_feature_index(feature_cols, args.target_col)
+    causal_attention_mask, _ = load_causal_attention_mask(getattr(args, "causal_graph_dir", None), feature_cols)
 
     return ITransformerBaseline(
         target_feature_index=target_feature_index,
@@ -201,6 +265,7 @@ def build_itransformer_model(args: argparse.Namespace, scalers: Any) -> ITransfo
         activation=args.activation,
         output_attention=args.output_attention,
         use_norm=not args.disable_norm,
+        causal_attention_mask=causal_attention_mask,
     )
 
 
@@ -250,6 +315,10 @@ def build_eval_args_from_checkpoint(cli_args: argparse.Namespace, checkpoint_arg
     eval_args.report_split = cli_args.report_split
     eval_args.experiment_name = cli_args.experiment_name or getattr(eval_args, "experiment_name", None)
     eval_args.tuning_stage = cli_args.tuning_stage or getattr(eval_args, "tuning_stage", None)
+    if cli_args.causal_graph_dir is not None:
+        eval_args.causal_graph_dir = cli_args.causal_graph_dir
+    elif not hasattr(eval_args, "causal_graph_dir"):
+        eval_args.causal_graph_dir = None
     if cli_args.max_eval_batches is not None:
         eval_args.max_eval_batches = cli_args.max_eval_batches
     eval_args.progress_mininterval = cli_args.progress_mininterval
@@ -274,6 +343,10 @@ def evaluate_and_export(
     history: list[dict[str, float | int]],
 ) -> None:
     target_feature_index = get_target_feature_index(list(args.feature_cols), args.target_col)
+    _, causal_mask_metadata = load_causal_attention_mask(
+        getattr(args, "causal_graph_dir", None),
+        list(args.feature_cols),
+    )
     trainable_parameter_count = int(sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
     validation_loader = create_data_loader(datasets["validation"], args.batch_size, False, args.num_workers, device)
 
@@ -330,7 +403,11 @@ def evaluate_and_export(
         "tuning_stage": args.tuning_stage,
         "device": str(device),
         "baseline_type": "itransformer",
-        "baseline_definition": "Vanilla iTransformer backbone with Active_Pow extracted from the multivariate forecast output.",
+        "baseline_definition": (
+            "iTransformer backbone with Active_Pow extracted from the multivariate forecast output"
+            + (" and a global PCMCI variable-level attention mask." if causal_mask_metadata else ".")
+        ),
+        "causal_mask": causal_mask_metadata,
         "best_epoch": best_epoch,
         "best_validation_loss": best_val_loss,
         "expected_delta_minutes": float(expected_delta / pd.Timedelta(minutes=1)),
@@ -362,6 +439,8 @@ def evaluate_and_export(
     log(f"- predictions: {predictions_path}")
     log(f"- plot: {plot_path}")
     log(f"- checkpoint: {checkpoint_path}")
+    if causal_mask_metadata is not None:
+        log(f"- causal mask: {causal_mask_metadata['causal_adjacency_path']}")
 
     all_metrics = reported_metrics["all_timestamps"]
     daytime_metrics = reported_metrics["daytime_only"]
