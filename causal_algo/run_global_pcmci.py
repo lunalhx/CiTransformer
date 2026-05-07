@@ -60,7 +60,7 @@ EXOGENOUS_TIME_COLUMNS = {
 }
 NON_EXOGENOUS_COLUMNS = {TARGET_COLUMN, *RADIATION_COLUMNS, *WEATHER_COLUMNS}
 TIME_COLUMN_CANDIDATES = ["timestamp", "datetime", "date", "time", "Time", "DateTime"]
-DEFAULT_OUTPUT_DIR = "results/causal_graphs/global_pcmci_11vars_train"
+DEFAULT_OUTPUT_DIR = "results/d1_long_no_wind_2015_2022/causal_graphs/global_pcmci_11vars_train"
 DEFAULT_FREQ_MINUTES = 5
 BLOCKED_ATTENTION_VALUE = -1e9
 
@@ -164,9 +164,9 @@ def resolve_train_path(project_root: Path, train_path: str | None = None) -> Pat
         raise FileNotFoundError(f"Specified --train_path does not exist: {explicit_path}")
 
     candidates = [
-        project_root / "data/processed_selected_2020_2022/splits/train.csv",
+        project_root / "data/processed_long_no_wind_2015_2022/splits/train.csv",
         # Practical fallback for projects that store split files directly under the processed directory.
-        project_root / "data/processed_selected_2020_2022/train.csv",
+        project_root / "data/processed_long_no_wind_2015_2022/train.csv",
     ]
     for candidate in candidates:
         if candidate.exists():

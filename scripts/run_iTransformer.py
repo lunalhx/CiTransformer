@@ -126,13 +126,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--results_dir",
         type=str,
-        default="results/itransformer",
+        default="results/d1_long_no_wind_2015_2022/itransformer",
         help="Directory for metrics/predictions/plots.",
     )
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="checkpoints/itransformer/best_model.pth",
+        default="checkpoints/d1_long_no_wind_2015_2022/itransformer/best_model.pth",
         help="Path to save the best checkpoint.",
     )
     parser.add_argument(

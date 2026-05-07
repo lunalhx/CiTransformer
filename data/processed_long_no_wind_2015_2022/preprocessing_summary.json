@@ -1,0 +1,178 @@
+{
+  "dataset": {
+    "preset": "long_no_wind_2015_2022",
+    "name": "D1 long no-wind 2015-2022"
+  },
+  "input_path": "/Users/lunalhx/Desktop/202509/CiTransformer/data/raw/91-Site_DKA-M9_B-Phase.csv",
+  "output_dir": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_long_no_wind_2015_2022",
+  "site": {
+    "latitude": -23.762,
+    "longitude": 133.875,
+    "altitude_m": 546.0,
+    "timezone": "Australia/Darwin",
+    "day_night_elevation_threshold_deg": 5.0,
+    "solar_position_method": "pvlib"
+  },
+  "selection": {
+    "input_rows_total": 1250668,
+    "invalid_timestamp_rows_dropped": 0,
+    "selected_start": "2015-03-01 00:00:00",
+    "selected_end": "2022-12-31 23:55:00",
+    "selected_periods": [
+      {
+        "start": "2015-03-01 00:00:00",
+        "end": "2018-12-31 23:55:00",
+        "rows": 403270
+      },
+      {
+        "start": "2020-01-01 00:00:00",
+        "end": "2022-12-31 23:55:00",
+        "rows": 308822
+      }
+    ],
+    "selected_rows": 712092,
+    "selected_first_timestamp": "2015-03-01 00:00:00",
+    "selected_last_timestamp": "2022-12-31 23:55:00",
+    "duplicate_timestamp_rows": 0
+  },
+  "excluded_periods": [
+    {
+      "period": "2019-01-01 00:00:00 to 2019-12-31 23:55:00",
+      "reason": "raw audit shows required complete-row rate of about 56.11% and multiple severe long tilted-irradiance missing segments"
+    },
+    {
+      "period": "2024-01-01 00:00:00 to 2025-08-23 05:20:00",
+      "reason": "raw audit shows relatively heavy required-variable missingness in 2024 and 2025"
+    }
+  ],
+  "sampling": {
+    "expected_delta": "0 days 00:05:00",
+    "expected_delta_minutes": 5.0,
+    "timestamp_diff_count": 712091,
+    "expected_delta_count": 712056,
+    "expected_delta_ratio_pct": 99.99508489785715,
+    "irregular_delta_count": 35,
+    "larger_than_expected_gap_count": 35,
+    "estimated_missing_timestamp_steps": 112452
+  },
+  "feature_columns": [
+    "Active_Pow",
+    "Radiation_Global_Tilted",
+    "Radiation_Diffuse_Tilted",
+    "Weather_T",
+    "Weather_R",
+    "solar_elevation",
+    "sin_time_of_day",
+    "cos_time_of_day",
+    "sin_day_of_year",
+    "cos_day_of_year",
+    "day_night_label"
+  ],
+  "target_column": "Active_Pow",
+  "split_strategy": "calendar",
+  "split_bounds": {
+    "train": [
+      [
+        "2015-03-01 00:00:00",
+        "2018-12-31 23:55:00"
+      ],
+      [
+        "2020-01-01 00:00:00",
+        "2020-12-31 23:55:00"
+      ]
+    ],
+    "validation": [
+      [
+        "2021-01-01 00:00:00",
+        "2021-06-30 23:55:00"
+      ]
+    ],
+    "calibration": [
+      [
+        "2021-07-01 00:00:00",
+        "2021-12-31 23:55:00"
+      ]
+    ],
+    "test": [
+      [
+        "2022-01-01 00:00:00",
+        "2022-12-31 23:55:00"
+      ]
+    ]
+  },
+  "cleaning": {
+    "rows_before_clean_drop": 712092,
+    "rows_dropped_after_gap_rules": 10586,
+    "rows_after_cleaning": 701506,
+    "remaining_missing_values": 0,
+    "nighttime_rows": 380392,
+    "power_clip_range": [
+      0.0,
+      11.55
+    ],
+    "irradiance_clip_range": [
+      0.0,
+      1300.0
+    ]
+  },
+  "scaler_policy": {
+    "preprocessing_fits_scaler": false,
+    "downstream_scaler_fit_scope": "train_only"
+  },
+  "split_summary": [
+    {
+      "split": "train",
+      "row_count": 500601,
+      "actual_ratio_pct": 71.36090069079951,
+      "start_time": "2015-03-01 00:00:00+09:30",
+      "end_time": "2020-12-31 23:55:00+09:30",
+      "missing_values": 0
+    },
+    {
+      "split": "validation",
+      "row_count": 47164,
+      "actual_ratio_pct": 6.723249694229272,
+      "start_time": "2021-01-01 00:00:00+09:30",
+      "end_time": "2021-06-30 23:55:00+09:30",
+      "missing_values": 0
+    },
+    {
+      "split": "calibration",
+      "row_count": 51805,
+      "actual_ratio_pct": 7.38482635928987,
+      "start_time": "2021-07-01 00:00:00+09:30",
+      "end_time": "2021-12-31 23:55:00+09:30",
+      "missing_values": 0
+    },
+    {
+      "split": "test",
+      "row_count": 101936,
+      "actual_ratio_pct": 14.53102325568135,
+      "start_time": "2022-01-01 00:00:00+09:30",
+      "end_time": "2022-12-31 23:55:00+09:30",
+      "missing_values": 0
+    }
+  ],
+  "report": {
+    "title": "Preprocessing Report: D1 Long No-Wind PV Dataset 2015-2022",
+    "context_notes": [
+      "这是 D1 long no-wind 主数据集；D1 是新的数据集版本，不替代 train/validation/test 的划分语义。",
+      "Wind_Speed is excluded because the raw audit reports 73.201% total missingness, with the long missing run from 2016-10-21 13:10:00 to 2025-08-23 05:20:00.",
+      "The full year 2019 is excluded because its required complete-row rate is about 56.11% and it contains multiple severe long tilted-irradiance missing segments.",
+      "2024 and 2025 are not included in the main D1 experiment dataset because their missingness is also relatively heavy."
+    ],
+    "feature_decision_notes": [
+      "Final feature columns follow the existing no-wind 11-feature baseline protocol.",
+      "Wind_Speed is excluded because the raw audit reports 73.201% total missingness, and it is essentially absent from 2016-10-21 13:10:00 to 2025-08-23 05:20:00.",
+      "Scaling is intentionally not performed here; downstream training code should fit scalers on train only."
+    ]
+  },
+  "outputs": {
+    "selected_raw": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_long_no_wind_2015_2022/selected_raw_long_no_wind_2015_2022.csv",
+    "nighttime_labeled": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_long_no_wind_2015_2022/nighttime_labeled_long_no_wind_2015_2022.csv",
+    "core_features_before_clean": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_long_no_wind_2015_2022/core_features_before_clean.csv",
+    "core_features_clean": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_long_no_wind_2015_2022/core_features_clean.csv",
+    "splits": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_long_no_wind_2015_2022/splits",
+    "audit": "/Users/lunalhx/Desktop/202509/CiTransformer/data/processed_long_no_wind_2015_2022/audit"
+  }
+}

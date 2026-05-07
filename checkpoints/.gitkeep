@@ -1,4 +1,0 @@
-# 此文件仅用于保持目录存在（Git 不追踪空目录）
-# 训练好的模型权重 (.pth) 会保存在这里
-# 文件命名规范: {dataset}_{seq_len}_{pred_len}_epoch{N}.pth
-# 例如: spain_electricity_96_24_epoch10.pth

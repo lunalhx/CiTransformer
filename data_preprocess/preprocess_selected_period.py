@@ -24,6 +24,9 @@ DEFAULT_INPUT_PATH = PROJECT_ROOT / "data" / "raw" / "91-Site_DKA-M9_B-Phase.csv
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed_selected_2020_2022"
 DEFAULT_START = "2020-01-01 00:00:00"
 DEFAULT_END = "2022-12-31 23:55:00"
+LONG_NO_WIND_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed_long_no_wind_2015_2022"
+LONG_NO_WIND_START = "2015-03-01 00:00:00"
+LONG_NO_WIND_END = "2022-12-31 23:55:00"
 EXPECTED_DELTA = pd.Timedelta(minutes=5)
 
 SITE_LAT = -23.762
@@ -83,6 +86,88 @@ CALENDAR_SPLIT_BOUNDS = {
     "validation": ("2021-01-01 00:00:00", "2021-06-30 23:55:00"),
     "calibration": ("2021-07-01 00:00:00", "2021-12-31 23:55:00"),
     "test": ("2022-01-01 00:00:00", "2022-12-31 23:55:00"),
+}
+
+LONG_NO_WIND_CALENDAR_SPLIT_BOUNDS = {
+    "train": [
+        ("2015-03-01 00:00:00", "2018-12-31 23:55:00"),
+        ("2020-01-01 00:00:00", "2020-12-31 23:55:00"),
+    ],
+    "validation": [("2021-01-01 00:00:00", "2021-06-30 23:55:00")],
+    "calibration": [("2021-07-01 00:00:00", "2021-12-31 23:55:00")],
+    "test": [("2022-01-01 00:00:00", "2022-12-31 23:55:00")],
+}
+
+LONG_NO_WIND_SELECTION_PERIODS = [
+    ("2015-03-01 00:00:00", "2018-12-31 23:55:00"),
+    ("2020-01-01 00:00:00", "2022-12-31 23:55:00"),
+]
+
+PRESET_CONFIGS: dict[str, dict[str, Any]] = {
+    "selected_2020_2022": {
+        "dataset_name": "selected_2020_2022",
+        "title": "Preprocessing Report: Selected PV Period 2020-2022",
+        "output_dir": DEFAULT_OUTPUT_DIR,
+        "start": DEFAULT_START,
+        "end": DEFAULT_END,
+        "selection_periods": [(DEFAULT_START, DEFAULT_END)],
+        "split_strategy": "calendar",
+        "calendar_split_bounds": CALENDAR_SPLIT_BOUNDS,
+        "output_suffix": "2020_2022",
+        "context_notes": [
+            "This is the existing selected 2020-2022 no-wind PV dataset.",
+            "Final feature columns follow the existing no-wind baseline protocol.",
+        ],
+        "feature_decision_notes": [
+            "Final feature columns follow the existing no-wind baseline protocol.",
+            "Wind_Speed is excluded because it is fully missing in the selected 2020-2022 period.",
+            "Scaling is intentionally not performed here; downstream training code should fit scalers on train only.",
+        ],
+    },
+    "long_no_wind_2015_2022": {
+        "dataset_name": "D1 long no-wind 2015-2022",
+        "title": "Preprocessing Report: D1 Long No-Wind PV Dataset 2015-2022",
+        "output_dir": LONG_NO_WIND_OUTPUT_DIR,
+        "start": LONG_NO_WIND_START,
+        "end": LONG_NO_WIND_END,
+        "selection_periods": LONG_NO_WIND_SELECTION_PERIODS,
+        "split_strategy": "calendar",
+        "calendar_split_bounds": LONG_NO_WIND_CALENDAR_SPLIT_BOUNDS,
+        "output_suffix": "long_no_wind_2015_2022",
+        "excluded_periods": [
+            {
+                "period": "2019-01-01 00:00:00 to 2019-12-31 23:55:00",
+                "reason": (
+                    "raw audit shows required complete-row rate of about 56.11% and "
+                    "multiple severe long tilted-irradiance missing segments"
+                ),
+            },
+            {
+                "period": "2024-01-01 00:00:00 to 2025-08-23 05:20:00",
+                "reason": "raw audit shows relatively heavy required-variable missingness in 2024 and 2025",
+            },
+        ],
+        "context_notes": [
+            "这是 D1 long no-wind 主数据集；D1 是新的数据集版本，不替代 train/validation/test 的划分语义。",
+            (
+                "Wind_Speed is excluded because the raw audit reports 73.201% total missingness, "
+                "with the long missing run from 2016-10-21 13:10:00 to 2025-08-23 05:20:00."
+            ),
+            (
+                "The full year 2019 is excluded because its required complete-row rate is about "
+                "56.11% and it contains multiple severe long tilted-irradiance missing segments."
+            ),
+            "2024 and 2025 are not included in the main D1 experiment dataset because their missingness is also relatively heavy.",
+        ],
+        "feature_decision_notes": [
+            "Final feature columns follow the existing no-wind 11-feature baseline protocol.",
+            (
+                "Wind_Speed is excluded because the raw audit reports 73.201% total missingness, "
+                "and it is essentially absent from 2016-10-21 13:10:00 to 2025-08-23 05:20:00."
+            ),
+            "Scaling is intentionally not performed here; downstream training code should fit scalers on train only.",
+        ],
+    },
 }
 
 FEATURE_DECISIONS = [
@@ -200,27 +285,78 @@ FEATURE_DECISIONS = [
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Preprocess the selected 2020-2022 PV period only. The script stops at "
-            "clean feature CSVs and chronological train/validation/calibration/test splits."
+            "Preprocess PV periods into clean feature CSVs and chronological "
+            "train/validation/calibration/test splits."
         )
     )
+    parser.add_argument(
+        "--preset",
+        choices=sorted(PRESET_CONFIGS),
+        default="selected_2020_2022",
+        help=(
+            "selected_2020_2022 keeps the original entrypoint; "
+            "long_no_wind_2015_2022 builds the D1 long no-wind dataset."
+        ),
+    )
     parser.add_argument("--input_path", type=str, default=str(DEFAULT_INPUT_PATH))
-    parser.add_argument("--output_dir", type=str, default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default=None,
+        help="Override the preset output directory.",
+    )
     parser.add_argument("--time_col", type=str, default="timestamp")
-    parser.add_argument("--start", type=str, default=DEFAULT_START)
-    parser.add_argument("--end", type=str, default=DEFAULT_END)
+    parser.add_argument("--start", type=str, default=None, help="Override the preset start timestamp.")
+    parser.add_argument("--end", type=str, default=None, help="Override the preset end timestamp.")
     parser.add_argument("--max_power_capacity", type=float, default=11.55)
     parser.add_argument("--max_irradiance", type=float, default=1300.0)
     parser.add_argument(
         "--split_strategy",
         choices=["calendar", "ratio"],
-        default="calendar",
+        default=None,
         help=(
-            "calendar: train=2020, validation=2021-H1, calibration=2021-H2, test=2022. "
+            "calendar: use the preset's explicit calendar split bounds. "
             "ratio: original 70/10/10/10 chronological split."
         ),
     )
     return parser.parse_args()
+
+
+def resolve_run_config(args: argparse.Namespace) -> dict[str, Any]:
+    preset = PRESET_CONFIGS[args.preset]
+    start_overridden = args.start is not None
+    end_overridden = args.end is not None
+
+    start = args.start or str(preset["start"])
+    end = args.end or str(preset["end"])
+    output_dir = args.output_dir or str(preset["output_dir"])
+    split_strategy = args.split_strategy or str(preset.get("split_strategy", "calendar"))
+
+    if start_overridden or end_overridden:
+        selection_periods = [(start, end)]
+    else:
+        selection_periods = list(preset.get("selection_periods", [(start, end)]))
+
+    if split_strategy == "calendar":
+        split_bounds = preset.get("calendar_split_bounds", CALENDAR_SPLIT_BOUNDS)
+    else:
+        split_bounds = "70/10/10/10"
+
+    return {
+        "preset": args.preset,
+        "dataset_name": preset["dataset_name"],
+        "title": preset["title"],
+        "output_dir": output_dir,
+        "start": start,
+        "end": end,
+        "selection_periods": selection_periods,
+        "split_strategy": split_strategy,
+        "split_bounds": split_bounds,
+        "output_suffix": preset["output_suffix"],
+        "excluded_periods": preset.get("excluded_periods", []),
+        "context_notes": preset.get("context_notes", []),
+        "feature_decision_notes": preset.get("feature_decision_notes", []),
+    }
 
 
 def ensure_output_dirs(output_dir: Path) -> None:
@@ -338,6 +474,7 @@ def load_and_filter_raw(
     time_col: str,
     start: str,
     end: str,
+    selection_periods: list[tuple[str, str]] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     if not input_path.exists():
         raise FileNotFoundError(f"Input raw CSV not found: {input_path}")
@@ -357,7 +494,25 @@ def load_and_filter_raw(
     if selected_start > selected_end:
         raise ValueError("--start must be <= --end.")
 
-    df = df.loc[(df[time_col] >= selected_start) & (df[time_col] <= selected_end)].copy()
+    periods = selection_periods or [(start, end)]
+    period_rows: list[dict[str, Any]] = []
+    combined_mask = pd.Series(False, index=df.index, dtype="bool")
+    for period_start, period_end in periods:
+        period_start_ts = pd.Timestamp(period_start)
+        period_end_ts = pd.Timestamp(period_end)
+        if period_start_ts > period_end_ts:
+            raise ValueError(f"Invalid selection period: {period_start} > {period_end}.")
+        period_mask = (df[time_col] >= period_start_ts) & (df[time_col] <= period_end_ts)
+        combined_mask = combined_mask | period_mask
+        period_rows.append(
+            {
+                "start": str(period_start_ts),
+                "end": str(period_end_ts),
+                "rows": int(period_mask.sum()),
+            }
+        )
+
+    df = df.loc[combined_mask].copy()
     df = df.sort_values(time_col).reset_index(drop=True)
 
     duplicate_rows = int(df[time_col].duplicated().sum())
@@ -375,6 +530,7 @@ def load_and_filter_raw(
         "invalid_timestamp_rows_dropped": invalid_timestamp_rows,
         "selected_start": str(selected_start),
         "selected_end": str(selected_end),
+        "selected_periods": period_rows,
         "selected_rows": int(len(df)),
         "selected_first_timestamp": str(df[time_col].iloc[0]),
         "selected_last_timestamp": str(df[time_col].iloc[-1]),
@@ -422,13 +578,30 @@ def audit_sampling(df: pd.DataFrame, time_col: str) -> tuple[dict[str, Any], pd.
     return summary, pd.DataFrame(gap_rows)
 
 
+def build_time_break_mask(index: pd.Index) -> pd.Series:
+    if len(index) == 0:
+        return pd.Series(dtype="bool", index=index)
+    if not isinstance(index, pd.DatetimeIndex):
+        values = np.zeros(len(index), dtype=bool)
+        values[0] = True
+        return pd.Series(values, index=index)
+
+    diffs = index.to_series().diff()
+    return pd.Series((diffs.isna() | (diffs != EXPECTED_DELTA)).to_numpy(), index=index)
+
+
+def build_time_segment_ids(index: pd.Index) -> pd.Series:
+    return build_time_break_mask(index).cumsum().astype("int64")
+
+
 def build_nan_run_lengths(series: pd.Series) -> tuple[pd.Series, pd.Series]:
     null_mask = series.isna()
     row_run_lengths = pd.Series(0, index=series.index, dtype="int64")
     if not null_mask.any():
         return row_run_lengths, pd.Series(dtype="int64")
 
-    group_id = null_mask.ne(null_mask.shift(fill_value=False)).cumsum()
+    time_break_mask = build_time_break_mask(series.index)
+    group_id = (null_mask.ne(null_mask.shift(fill_value=False)) | time_break_mask).cumsum()
     segment_lengths = null_mask[null_mask].groupby(group_id[null_mask]).size().astype("int64")
     row_run_lengths.loc[null_mask] = segment_lengths.reindex(group_id[null_mask]).to_numpy()
     return row_run_lengths, segment_lengths
@@ -477,7 +650,7 @@ def apply_gap_fill_rule(
     row_run_lengths, segment_lengths = build_nan_run_lengths(series)
     fill_mask = null_mask & row_run_lengths.le(max_fill_steps)
     long_mask = null_mask & row_run_lengths.gt(max_fill_steps)
-    causal_filled = series.ffill()
+    causal_filled = series.groupby(build_time_segment_ids(series.index)).ffill()
     series.loc[fill_mask] = causal_filled.loc[fill_mask]
 
     unresolved_fill_mask = fill_mask & series.isna()
@@ -576,12 +749,36 @@ def local_timestamp(timestamp: str) -> pd.Timestamp:
     return pd.Timestamp(timestamp, tz=SITE_TZ)
 
 
-def split_calendar(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def normalize_split_ranges(ranges: Any) -> list[tuple[str, str]]:
+    if (
+        isinstance(ranges, tuple)
+        and len(ranges) == 2
+        and isinstance(ranges[0], str)
+        and isinstance(ranges[1], str)
+    ):
+        return [ranges]
+    return [(str(start), str(end)) for start, end in ranges]
+
+
+def split_calendar(df: pd.DataFrame, split_bounds: dict[str, Any] | None = None) -> dict[str, pd.DataFrame]:
+    split_bounds = split_bounds or CALENDAR_SPLIT_BOUNDS
     splits: dict[str, pd.DataFrame] = {}
-    for split_name, (start, end) in CALENDAR_SPLIT_BOUNDS.items():
-        start_ts = local_timestamp(start)
-        end_ts = local_timestamp(end)
-        splits[split_name] = df.loc[(df.index >= start_ts) & (df.index <= end_ts)].copy()
+    for split_name, ranges in split_bounds.items():
+        split_parts: list[pd.DataFrame] = []
+        for start, end in normalize_split_ranges(ranges):
+            start_ts = local_timestamp(start)
+            end_ts = local_timestamp(end)
+            split_parts.append(df.loc[(df.index >= start_ts) & (df.index <= end_ts)].copy())
+
+        if split_parts:
+            split_df = pd.concat(split_parts).sort_index()
+        else:
+            split_df = df.iloc[0:0].copy()
+
+        if split_df.index.has_duplicates:
+            duplicate_count = int(split_df.index.duplicated().sum())
+            raise ValueError(f"Split `{split_name}` contains {duplicate_count} duplicated timestamps.")
+        splits[split_name] = split_df
     return splits
 
 
@@ -642,6 +839,29 @@ def to_jsonable(value: Any) -> Any:
     return value
 
 
+def format_configured_ranges(ranges: Any) -> str:
+    if isinstance(ranges, str):
+        return ranges
+    return "; ".join(f"{start} to {end}" for start, end in normalize_split_ranges(ranges))
+
+
+def feature_decisions_for_preset(preset: str) -> list[dict[str, Any]]:
+    decisions = [row.copy() for row in FEATURE_DECISIONS]
+    if preset == "long_no_wind_2015_2022":
+        for row in decisions:
+            if row["column"] == "Wind_Speed":
+                row["reason"] = (
+                    "Excluded from D1 because the raw audit reports 73.201% total missingness, "
+                    "with Wind_Speed essentially absent from 2016-10-21 13:10:00 to 2025-08-23 05:20:00."
+                )
+            elif row["column"] == "Wind_Direction":
+                row["reason"] = (
+                    "Dropped because wind direction is not useful without a reliable Wind_Speed feature "
+                    "and would require circular encoding."
+                )
+    return decisions
+
+
 def write_markdown_report(
     output_path: Path,
     summary: dict[str, Any],
@@ -650,17 +870,51 @@ def write_markdown_report(
     cleaning_stats: pd.DataFrame,
     split_summary: pd.DataFrame,
 ) -> None:
+    report_info = summary.get("report", {})
+    context_notes = report_info.get("context_notes", [])
+    feature_decision_notes = report_info.get("feature_decision_notes", [])
+
     lines = [
-        "# Preprocessing Report: Selected PV Period 2020-2022",
+        f"# {report_info.get('title', 'Preprocessing Report')}",
         "",
+    ]
+    if context_notes:
+        lines.extend(["## Dataset Context"])
+        lines.extend(f"- {note}" for note in context_notes)
+        lines.append("")
+
+    lines.extend(
+        [
         "## Scope",
+        f"- Dataset preset: `{summary['dataset']['preset']}`",
+        f"- Dataset name: {summary['dataset']['name']}",
         f"- Input: `{summary['input_path']}`",
         f"- Output directory: `{summary['output_dir']}`",
         f"- Selected raw time range: {summary['selection']['selected_start']} to {summary['selection']['selected_end']}",
         f"- Selected rows before cleaning: {summary['selection']['selected_rows']}",
         f"- Final clean rows: {summary['cleaning']['rows_after_cleaning']}",
         f"- Split strategy: {summary['split_strategy']}",
+        f"- Preprocessing scaler fit: {summary['scaler_policy']['preprocessing_fits_scaler']}",
         "",
+        ]
+    )
+
+    selected_periods = summary["selection"].get("selected_periods", [])
+    if selected_periods:
+        lines.extend(["## Selected Periods", "| start | end | raw rows |", "| --- | --- | ---: |"])
+        for period in selected_periods:
+            lines.append(f"| {period['start']} | {period['end']} | {int(period['rows'])} |")
+        lines.append("")
+
+    excluded_periods = summary.get("excluded_periods", [])
+    if excluded_periods:
+        lines.extend(["## Excluded Periods", "| period | reason |", "| --- | --- |"])
+        for period in excluded_periods:
+            lines.append(f"| {period['period']} | {period['reason']} |")
+        lines.append("")
+
+    lines.extend(
+        [
         "## Time Audit",
         f"- Expected sampling interval: {summary['sampling']['expected_delta']}",
         f"- Expected-delta ratio: {summary['sampling']['expected_delta_ratio_pct']:.4f}%",
@@ -670,7 +924,8 @@ def write_markdown_report(
         "## Raw Missing Summary",
         "| column | missing % | missing rows | max run | long runs |",
         "| --- | ---: | ---: | ---: | ---: |",
-    ]
+        ]
+    )
     for _, row in raw_missing_summary.iterrows():
         lines.append(
             f"| {row['column']} | {row['missing_rate_pct']:.3f} | {int(row['missing_count'])} | "
@@ -696,9 +951,16 @@ def write_markdown_report(
             "",
             "## Cleaning Rules",
             "- Nighttime Active_Pow and tilted irradiance columns are set to zero when day_night_label = 0.",
-            "- Missing runs up to 12 consecutive 5-minute steps are filled by causal forward fill.",
+            "- Missing runs up to 12 consecutive 5-minute steps are filled by causal forward fill within the same timestamp-continuous segment.",
             "- Longer missing runs are not imputed; affected rows are dropped and become temporal gaps for downstream segment-aware windowing.",
+            "- 删除长缺失后形成的时间断点会由 segment-aware dataset 处理，滑窗不会跨断点。",
             "- Active_Pow is clipped to the physical range and tilted irradiance columns are clipped to a plausible upper bound.",
+            "- No scaler is fit in preprocessing; scalers must be fit downstream on train only.",
+            "",
+            "## Cleaning Aggregate",
+            f"- Short missing rows filled: {int(cleaning_stats.get('filled_rows', pd.Series(dtype='float64')).fillna(0).sum())}",
+            f"- Rows removed after long/unresolved missing rules: {summary['cleaning']['rows_dropped_after_gap_rules']}",
+            f"- Remaining missing values in core features: {summary['cleaning']['remaining_missing_values']}",
             "",
             "## Cleaning Stats",
             "| column | rule | filled rows | invalid rows | long segments |",
@@ -712,6 +974,22 @@ def write_markdown_report(
             f"{int(row.get('invalid_rows', 0) if not pd.isna(row.get('invalid_rows', 0)) else 0)} | "
             f"{int(row.get('long_segments', 0) if not pd.isna(row.get('long_segments', 0)) else 0)} |"
         )
+
+    if isinstance(summary["split_bounds"], dict):
+        split_rows_by_name = split_summary.set_index("split")["row_count"].to_dict()
+        lines.extend(
+            [
+                "",
+                "## Configured Split Bounds",
+                "| split | configured time range(s) | rows |",
+                "| --- | --- | ---: |",
+            ]
+        )
+        for split_name, ranges in summary["split_bounds"].items():
+            lines.append(
+                f"| {split_name} | {format_configured_ranges(ranges)} | "
+                f"{int(split_rows_by_name.get(split_name, 0))} |"
+            )
 
     lines.extend(
         [
@@ -731,25 +1009,28 @@ def write_markdown_report(
         [
             "",
             "## Feature Decision",
-            "- Final feature columns follow the existing no-wind baseline protocol.",
-            "- Wind_Speed is excluded because it is fully missing in the selected 2020-2022 period.",
-            "- Scaling is intentionally not performed here; downstream training code should fit scalers on train only.",
         ]
     )
+    lines.extend(f"- {note}" for note in feature_decision_notes)
+    if not feature_decision_notes:
+        lines.append("- Final feature columns follow the existing no-wind baseline protocol.")
+        lines.append("- Scaling is intentionally not performed here; downstream training code should fit scalers on train only.")
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
     args = parse_args()
+    run_config = resolve_run_config(args)
     input_path = Path(args.input_path).expanduser().resolve()
-    output_dir = Path(args.output_dir).expanduser().resolve()
+    output_dir = Path(run_config["output_dir"]).expanduser().resolve()
     ensure_output_dirs(output_dir)
 
     raw_selected, selection_audit = load_and_filter_raw(
         input_path=input_path,
         time_col=args.time_col,
-        start=args.start,
-        end=args.end,
+        start=run_config["start"],
+        end=run_config["end"],
+        selection_periods=run_config["selection_periods"],
     )
     sampling_summary, timestamp_gaps = audit_sampling(raw_selected, args.time_col)
 
@@ -773,14 +1054,16 @@ def main() -> None:
         max_irradiance=args.max_irradiance,
     )
 
-    if args.split_strategy == "calendar":
-        splits = split_calendar(clean_df)
+    if run_config["split_strategy"] == "calendar":
+        splits = split_calendar(clean_df, split_bounds=run_config["split_bounds"])
     else:
         splits = split_ratio(clean_df)
     split_summary = save_splits(splits, output_dir)
 
-    raw_selected.to_csv(output_dir / "selected_raw_2020_2022.csv", index=False, encoding="utf-8-sig")
-    labeled_df.to_csv(output_dir / "nighttime_labeled_2020_2022.csv", encoding="utf-8-sig")
+    selected_raw_name = f"selected_raw_{run_config['output_suffix']}.csv"
+    nighttime_labeled_name = f"nighttime_labeled_{run_config['output_suffix']}.csv"
+    raw_selected.to_csv(output_dir / selected_raw_name, index=False, encoding="utf-8-sig")
+    labeled_df.to_csv(output_dir / nighttime_labeled_name, encoding="utf-8-sig")
     core_before_clean.to_csv(output_dir / "core_features_before_clean.csv", encoding="utf-8-sig")
     clean_df.to_csv(output_dir / "core_features_clean.csv", encoding="utf-8-sig")
 
@@ -792,13 +1075,18 @@ def main() -> None:
     )
     cleaning_stats.to_csv(output_dir / "audit" / "cleaning_stats.csv", index=False, encoding="utf-8-sig")
     timestamp_gaps.to_csv(output_dir / "audit" / "timestamp_gaps.csv", index=False, encoding="utf-8-sig")
-    pd.DataFrame(FEATURE_DECISIONS).to_csv(
+    feature_decisions = feature_decisions_for_preset(run_config["preset"])
+    pd.DataFrame(feature_decisions).to_csv(
         output_dir / "audit" / "feature_decisions.csv",
         index=False,
         encoding="utf-8-sig",
     )
 
     summary = {
+        "dataset": {
+            "preset": run_config["preset"],
+            "name": run_config["dataset_name"],
+        },
         "input_path": str(input_path),
         "output_dir": str(output_dir),
         "site": {
@@ -810,16 +1098,26 @@ def main() -> None:
             "solar_position_method": solar_position_method,
         },
         "selection": selection_audit,
+        "excluded_periods": run_config["excluded_periods"],
         "sampling": sampling_summary,
         "feature_columns": list(CORE_FEATURE_COLS),
         "target_column": TARGET_COL,
-        "split_strategy": args.split_strategy,
-        "split_bounds": CALENDAR_SPLIT_BOUNDS if args.split_strategy == "calendar" else "70/10/10/10",
+        "split_strategy": run_config["split_strategy"],
+        "split_bounds": run_config["split_bounds"],
         "cleaning": cleaning_summary,
+        "scaler_policy": {
+            "preprocessing_fits_scaler": False,
+            "downstream_scaler_fit_scope": "train_only",
+        },
         "split_summary": split_summary.to_dict(orient="records"),
+        "report": {
+            "title": run_config["title"],
+            "context_notes": run_config["context_notes"],
+            "feature_decision_notes": run_config["feature_decision_notes"],
+        },
         "outputs": {
-            "selected_raw": str(output_dir / "selected_raw_2020_2022.csv"),
-            "nighttime_labeled": str(output_dir / "nighttime_labeled_2020_2022.csv"),
+            "selected_raw": str(output_dir / selected_raw_name),
+            "nighttime_labeled": str(output_dir / nighttime_labeled_name),
             "core_features_before_clean": str(output_dir / "core_features_before_clean.csv"),
             "core_features_clean": str(output_dir / "core_features_clean.csv"),
             "splits": str(output_dir / "splits"),
@@ -841,6 +1139,7 @@ def main() -> None:
     )
 
     print(f"Preprocessing completed: {output_dir}")
+    print(f"Preset: {run_config['preset']}")
     print(f"Selected rows: {selection_audit['selected_rows']}")
     print(f"Clean rows: {cleaning_summary['rows_after_cleaning']}")
     print(split_summary.to_string(index=False))

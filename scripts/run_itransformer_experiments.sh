@@ -48,7 +48,7 @@ fi
 export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/citransformer-matplotlib}"
 mkdir -p "${MPLCONFIGDIR}"
 
-DATA_DIR="${DATA_DIR:-data/processed_selected_2020_2022}"
+DATA_DIR="${DATA_DIR:-data/processed_long_no_wind_2015_2022}"
 MODE="${MODE:-train}"
 REPORT_SPLIT="${REPORT_SPLIT:-test}"
 SEQ_LEN="${SEQ_LEN:-96}"
@@ -73,10 +73,10 @@ LOG_INTERVAL="${LOG_INTERVAL:-0}"
 PROGRESS_MININTERVAL="${PROGRESS_MININTERVAL:-15}"
 SEED="${SEED:-42}"
 DEVICE="${DEVICE:-auto}"
-RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-results/itransformer}"
-CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-checkpoints/itransformer}"
+RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-results/d1_long_no_wind_2015_2022/itransformer}"
+CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-checkpoints/d1_long_no_wind_2015_2022/itransformer}"
 TUNING_PLAN="${TUNING_PLAN:-standard}"
-TUNING_RESULTS_ROOT="${TUNING_RESULTS_ROOT:-results/tuning/itransformer/${TUNING_PLAN}}"
+TUNING_RESULTS_ROOT="${TUNING_RESULTS_ROOT:-results/d1_long_no_wind_2015_2022/tuning/itransformer/${TUNING_PLAN}}"
 TUNING_SUMMARY_ROOT="${TUNING_SUMMARY_ROOT:-${TUNING_RESULTS_ROOT}/summary}"
 TIME_COL="${TIME_COL:-}"
 SAMPLING_FREQ_MINUTES="${SAMPLING_FREQ_MINUTES:-}"
@@ -90,8 +90,8 @@ if [[ "${MODE}" != "train" && "${MODE}" != "export_tuned_best" ]]; then
   exit 1
 fi
 
-if [[ "${MODE}" == "export_tuned_best" && "${RESULTS_BASE_DIR}" == "results/itransformer" ]]; then
-  RESULTS_BASE_DIR="results/itransformer_tuned"
+if [[ "${MODE}" == "export_tuned_best" && "${RESULTS_BASE_DIR}" == "results/d1_long_no_wind_2015_2022/itransformer" ]]; then
+  RESULTS_BASE_DIR="results/d1_long_no_wind_2015_2022/itransformer_tuned"
 fi
 
 read -r -a PRED_LEN_ARRAY <<< "${PRED_LENS//,/ }"
