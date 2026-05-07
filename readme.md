@@ -87,10 +87,39 @@ python -c "import torch; import tigramite; import pandas; print('全部安装成
 
 ---
 
+## 跨机器配置
+
+项目运行路径和基础环境通过 YAML + 环境变量统一管理：
+
+```bash
+python -m utils.project_config get paths.data_dir
+python -m utils.project_config get runtime.device
+```
+
+默认配置在 `configs/default.yaml`，每台机器可以复制模板并写自己的本地配置：
+
+```bash
+cp configs/local.example.yaml configs/local.yaml
+```
+
+`configs/local.yaml` 不提交到 git。也可以用环境变量临时覆盖：
+
+```bash
+CITRANSFORMER_DATA_DIR=/mnt/data/pv \
+CITRANSFORMER_RESULTS_ROOT=/mnt/experiments/results \
+CITRANSFORMER_DEVICE=cuda \
+bash scripts/run_lstm_experiments.sh
+```
+
+优先级为：CLI 参数 > 环境变量 > `configs/local.yaml` > `configs/default.yaml` > 代码保底默认值。所有相对路径都会按项目根目录解析。
+
+---
+
 ## 📁 项目结构
 
 ```
 CiTransformer/
+├── configs/              # 共享默认配置和本机配置模板
 ├── data/
 │   ├── raw/               # 原始 CSV 数据（如 electricity.csv）
 │   └── processed/         # 处理后的平稳数据 + 邻接矩阵

@@ -3,36 +3,13 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${PROJECT_ROOT}/scripts/project_config.sh"
 RUN_SCRIPT="${PROJECT_ROOT}/scripts/run_iTransformer.py"
 
 if [[ ! -f "${RUN_SCRIPT}" ]]; then
   echo "Error: cannot find ${RUN_SCRIPT}" >&2
   exit 1
 fi
-
-resolve_python_bin() {
-  if [[ -n "${PYTHON_BIN:-}" ]]; then
-    echo "${PYTHON_BIN}"
-    return 0
-  fi
-
-  if [[ -x "${PROJECT_ROOT}/.venv/bin/python" ]]; then
-    echo "${PROJECT_ROOT}/.venv/bin/python"
-    return 0
-  fi
-
-  if command -v python3 >/dev/null 2>&1; then
-    command -v python3
-    return 0
-  fi
-
-  if command -v python >/dev/null 2>&1; then
-    command -v python
-    return 0
-  fi
-
-  return 1
-}
 
 PYTHON_BIN="$(resolve_python_bin)" || {
   echo "Error: no usable Python interpreter found. Set PYTHON_BIN manually." >&2
@@ -45,10 +22,9 @@ if ! "${PYTHON_BIN}" -c "import torch, pandas, matplotlib" >/dev/null 2>&1; then
   exit 1
 fi
 
-export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/citransformer-matplotlib}"
-mkdir -p "${MPLCONFIGDIR}"
+setup_matplotlib_cache
 
-DATA_DIR="${DATA_DIR:-data/processed_long_no_wind_2015_2022}"
+DATA_DIR="${DATA_DIR:-$(project_config_get paths.data_dir)}"
 MODE="${MODE:-train}"
 REPORT_SPLIT="${REPORT_SPLIT:-test}"
 SEQ_LEN="${SEQ_LEN:-96}"
@@ -68,15 +44,15 @@ GRAD_CLIP="${GRAD_CLIP:-1.0}"
 EPOCHS="${EPOCHS:-120}"
 PATIENCE="${PATIENCE:-20}"
 MIN_DELTA="${MIN_DELTA:-1e-5}"
-NUM_WORKERS="${NUM_WORKERS:-0}"
+NUM_WORKERS="${NUM_WORKERS:-$(project_config_get runtime.num_workers)}"
 LOG_INTERVAL="${LOG_INTERVAL:-0}"
 PROGRESS_MININTERVAL="${PROGRESS_MININTERVAL:-15}"
 SEED="${SEED:-42}"
-DEVICE="${DEVICE:-auto}"
-RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-results/d1_long_no_wind_2015_2022/itransformer}"
-CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-checkpoints/d1_long_no_wind_2015_2022/itransformer}"
+DEVICE="${DEVICE:-$(project_config_get runtime.device)}"
+RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-$(project_config_get paths.results.itransformer)}"
+CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-$(project_config_get paths.checkpoints.itransformer)}"
 TUNING_PLAN="${TUNING_PLAN:-standard}"
-TUNING_RESULTS_ROOT="${TUNING_RESULTS_ROOT:-results/d1_long_no_wind_2015_2022/tuning/itransformer/${TUNING_PLAN}}"
+TUNING_RESULTS_ROOT="${TUNING_RESULTS_ROOT:-$(project_config_get paths.results.tuning_itransformer)/${TUNING_PLAN}}"
 TUNING_SUMMARY_ROOT="${TUNING_SUMMARY_ROOT:-${TUNING_RESULTS_ROOT}/summary}"
 TIME_COL="${TIME_COL:-}"
 SAMPLING_FREQ_MINUTES="${SAMPLING_FREQ_MINUTES:-}"
@@ -90,8 +66,8 @@ if [[ "${MODE}" != "train" && "${MODE}" != "export_tuned_best" ]]; then
   exit 1
 fi
 
-if [[ "${MODE}" == "export_tuned_best" && "${RESULTS_BASE_DIR}" == "results/d1_long_no_wind_2015_2022/itransformer" ]]; then
-  RESULTS_BASE_DIR="results/d1_long_no_wind_2015_2022/itransformer_tuned"
+if [[ "${MODE}" == "export_tuned_best" && "${RESULTS_BASE_DIR}" == "$(project_config_get paths.results.itransformer)" ]]; then
+  RESULTS_BASE_DIR="$(project_config_get paths.results.itransformer_tuned)"
 fi
 
 read -r -a PRED_LEN_ARRAY <<< "${PRED_LENS//,/ }"
@@ -105,7 +81,8 @@ cd "${PROJECT_ROOT}"
 
 resolve_tuned_best_checkpoint() {
   local pred_len="$1"
-  local summary_root="${PROJECT_ROOT}/${TUNING_SUMMARY_ROOT}"
+  local summary_root
+  summary_root="$(project_path "${TUNING_SUMMARY_ROOT}")"
 
   "${PYTHON_BIN}" - "${summary_root}" "${pred_len}" <<'PY'
 import csv
@@ -233,9 +210,9 @@ run_train_case() {
   echo "Running iTransformer baseline with pred_len=${pred_len}"
   echo "Project    -> ${PROJECT_ROOT}"
   echo "Python     -> ${PYTHON_BIN}"
-  echo "Data dir   -> ${PROJECT_ROOT}/${DATA_DIR}"
-  echo "Results    -> ${PROJECT_ROOT}/${results_dir}"
-  echo "Checkpoint -> ${PROJECT_ROOT}/${checkpoint_path}"
+  echo "Data dir   -> $(project_path "${DATA_DIR}")"
+  echo "Results    -> $(project_path "${results_dir}")"
+  echo "Checkpoint -> $(project_path "${checkpoint_path}")"
   echo "======================================================================"
 
   "${cmd[@]}"
@@ -282,8 +259,8 @@ run_export_case() {
   echo "Project    -> ${PROJECT_ROOT}"
   echo "Python     -> ${PYTHON_BIN}"
   echo "Report     -> ${REPORT_SPLIT}"
-  echo "Results    -> ${PROJECT_ROOT}/${results_dir}"
-  echo "Checkpoint -> ${checkpoint_path}"
+  echo "Results    -> $(project_path "${results_dir}")"
+  echo "Checkpoint -> $(project_path "${checkpoint_path}")"
   echo "======================================================================"
 
   "${cmd[@]}"

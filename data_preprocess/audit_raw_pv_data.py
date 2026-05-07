@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +13,20 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_FILE = PROJECT_ROOT / "data" / "raw" / "91-Site_DKA-M9_B-Phase.csv"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "results" / "data_audit" / "raw_pv"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.project_config import load_project_config, resolve_project_path
+
+PROJECT_CONFIG = load_project_config()
+DEFAULT_INPUT_FILE = PROJECT_CONFIG.get_path(
+    "paths.raw_input_file",
+    PROJECT_ROOT / "data" / "raw" / "91-Site_DKA-M9_B-Phase.csv",
+)
+DEFAULT_OUTPUT_DIR = PROJECT_CONFIG.get_path(
+    "paths.results.data_audit_raw_pv",
+    PROJECT_ROOT / "results" / "data_audit" / "raw_pv",
+)
 
 TIME_COLUMN_CANDIDATES = (
     "timestamp",
@@ -779,8 +792,8 @@ def write_markdown_report(
 
 def main() -> None:
     args = parse_args()
-    input_path = Path(args.input).expanduser().resolve()
-    output_dir = Path(args.output_dir).expanduser().resolve()
+    input_path = resolve_project_path(args.input, PROJECT_ROOT).resolve()
+    output_dir = resolve_project_path(args.output_dir, PROJECT_ROOT).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     df, time_col, invalid_timestamp_rows = load_raw_csv(input_path, args.time_col)

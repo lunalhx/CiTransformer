@@ -11,6 +11,14 @@ from typing import Any
 
 import pandas as pd
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.project_config import load_project_config, resolve_project_path
+
+PROJECT_CONFIG = load_project_config()
+
 
 CONFIG_FIELDS = [
     "seq_len",
@@ -75,7 +83,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--root_dir",
         type=str,
-        default="results/d1_long_no_wind_2015_2022/tuning/itransformer",
+        default=str(
+            PROJECT_CONFIG.get_path(
+                "paths.results.tuning_itransformer",
+                "results/d1_long_no_wind_2015_2022/tuning/itransformer",
+            )
+        ),
         help="Root directory that contains tuning experiment subdirectories.",
     )
     parser.add_argument(
@@ -279,8 +292,8 @@ def print_best_tsv(shared_ranking: pd.DataFrame) -> int:
 
 def main() -> None:
     args = parse_args()
-    root_dir = Path(args.root_dir).resolve()
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else root_dir / "summary"
+    root_dir = resolve_project_path(args.root_dir, PROJECT_ROOT).resolve()
+    output_dir = resolve_project_path(args.output_dir, PROJECT_ROOT).resolve() if args.output_dir else root_dir / "summary"
 
     rows = collect_rows(root_dir)
     all_runs = pd.DataFrame(rows)

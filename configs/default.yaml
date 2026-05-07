@@ -1,0 +1,111 @@
+# =============================================================================
+# configs/default.yaml —— 所有机器共用的默认值
+# =============================================================================
+# 【优先级说明】
+#   default.yaml（本文件）< configs/local.yaml（本机覆盖）< 环境变量 CITRANSFORMER_*
+#
+# 【修改规则】
+#   - 本文件提交到 git，用于记录"合理的全局默认值"，不写任何绝对路径。
+#   - 需要改路径或运行环境时，请在 configs/local.yaml 里覆盖对应字段即可。
+#   - 所有相对路径都相对于项目根目录（CiTransformer/）自动解析。
+# =============================================================================
+
+paths:
+  # ------------------------------------------------------------------
+  # 【主数据目录】脚本训练/验证时默认读取的已处理数据集目录。
+  # 对应环境变量：CITRANSFORMER_DATA_DIR
+  # 换数据集时，在 local.yaml 里改这一行即可。
+  # ------------------------------------------------------------------
+  data_dir: data/processed_long_no_wind_2015_2022
+
+  # ------------------------------------------------------------------
+  # 【原始输入文件】预处理脚本（preprocess_selected_period.py 等）读取的原始 CSV。
+  # 如果原始文件放在其他位置，在 local.yaml 里用绝对路径覆盖。
+  # ------------------------------------------------------------------
+  raw_input_file: data/raw/91-Site_DKA-M9_B-Phase.csv
+
+  # ------------------------------------------------------------------
+  # 【精选期处理结果目录】2020-2022 精选片段的处理输出目录。
+  # 由 preprocess_selected_period.py 写入，供对比实验读取。
+  # ------------------------------------------------------------------
+  processed_selected_dir: data/processed_selected_2020_2022
+
+  # ------------------------------------------------------------------
+  # 【长序列无风处理结果目录】2015-2022 去掉风速特征后的处理输出目录。
+  # 由 data_preprocess/ 下的脚本写入，是当前主实验的输入来源。
+  # ------------------------------------------------------------------
+  processed_long_no_wind_dir: data/processed_long_no_wind_2015_2022
+
+  # ------------------------------------------------------------------
+  # 【实验结果根目录】所有模型的评估指标、图表输出到这个目录下。
+  # 对应环境变量：CITRANSFORMER_RESULTS_ROOT
+  # 修改此值后，下方 results.* 各子目录会由代码自动推导（见 project_config.py）。
+  # ------------------------------------------------------------------
+  results_root: results/d1_long_no_wind_2015_2022
+
+  # ------------------------------------------------------------------
+  # 【检查点根目录】训练好的模型权重文件保存位置。
+  # 对应环境变量：CITRANSFORMER_CHECKPOINTS_ROOT
+  # 修改此值后，下方 checkpoints.* 各子目录会由代码自动推导。
+  # ------------------------------------------------------------------
+  checkpoints_root: checkpoints/d1_long_no_wind_2015_2022
+
+  # ------------------------------------------------------------------
+  # 【matplotlib 缓存目录】避免多进程训练时 matplotlib 目录冲突。
+  # 对应环境变量：CITRANSFORMER_MPLCONFIGDIR
+  # ------------------------------------------------------------------
+  matplotlib_cache: .cache/matplotlib
+
+  # ------------------------------------------------------------------
+  # 各模型/任务的结果子目录。
+  # ⚠️ 通常不需要手动修改——修改 results_root 后代码会自动推导。
+  #    仅在需要单独定制某个子目录时才在 local.yaml 里覆盖。
+  # ------------------------------------------------------------------
+  results:
+    persistence:                          results/d1_long_no_wind_2015_2022/persistence
+    lstm:                                 results/d1_long_no_wind_2015_2022/lstm
+    itransformer:                         results/d1_long_no_wind_2015_2022/itransformer
+    itransformer_tuned:                   results/d1_long_no_wind_2015_2022/itransformer_tuned
+    itransformer_global_pcmci_11vars:     results/d1_long_no_wind_2015_2022/itransformer_global_pcmci_11vars
+    tuning_itransformer:                  results/d1_long_no_wind_2015_2022/tuning/itransformer
+    causal_graphs_global_pcmci_11vars_train: results/d1_long_no_wind_2015_2022/causal_graphs/global_pcmci_11vars_train
+    data_audit_raw_pv:                    results/data_audit/raw_pv
+
+  # ------------------------------------------------------------------
+  # 各模型检查点子目录。
+  # ⚠️ 同上，修改 checkpoints_root 后代码自动推导，一般不需要单独改。
+  # ------------------------------------------------------------------
+  checkpoints:
+    lstm:                                 checkpoints/d1_long_no_wind_2015_2022/lstm
+    itransformer:                         checkpoints/d1_long_no_wind_2015_2022/itransformer
+    itransformer_global_pcmci_11vars:     checkpoints/d1_long_no_wind_2015_2022/itransformer_global_pcmci_11vars
+    tuning_itransformer:                  checkpoints/d1_long_no_wind_2015_2022/tuning/itransformer
+
+runtime:
+  # ------------------------------------------------------------------
+  # 【计算设备】训练时使用的硬件后端。
+  # 对应环境变量：CITRANSFORMER_DEVICE
+  # 可选值：
+  #   auto   → 自动检测（有 CUDA 用 CUDA，有 MPS 用 MPS，否则 CPU）
+  #   cuda   → NVIDIA GPU（服务器/云端）
+  #   mps    → Apple Silicon GPU（M1/M2/M3 Mac）
+  #   cpu    → 强制使用 CPU
+  # ------------------------------------------------------------------
+  device: auto
+
+  # ------------------------------------------------------------------
+  # 【数据加载线程数】DataLoader 的 num_workers 参数。
+  # 对应环境变量：CITRANSFORMER_NUM_WORKERS
+  # 建议值：
+  #   0      → 单线程，调试时方便，Windows 上推荐
+  #   4~8    → 多核 CPU 服务器或 Mac 上可适当调大
+  # ------------------------------------------------------------------
+  num_workers: 0
+
+  # ------------------------------------------------------------------
+  # 【Python 解释器路径】用于脚本内部调用子进程时指定 python。
+  # 对应环境变量：PYTHON_BIN
+  # 留空（""）表示使用当前激活环境中的 python。
+  # 示例：/opt/conda/envs/citransformer/bin/python
+  # ------------------------------------------------------------------
+  python_bin: ""

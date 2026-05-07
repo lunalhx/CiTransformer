@@ -3,6 +3,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${PROJECT_ROOT}/scripts/project_config.sh"
 RUN_SCRIPT="${PROJECT_ROOT}/scripts/run_itransformer_experiments.sh"
 CAUSAL_SCRIPT="${PROJECT_ROOT}/causal_algo/run_global_pcmci.py"
 
@@ -16,9 +17,12 @@ if [[ ! -f "${CAUSAL_SCRIPT}" ]]; then
   exit 1
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-${PROJECT_ROOT}/.venv/bin/python}"
-DATA_DIR="${DATA_DIR:-data/processed_long_no_wind_2015_2022}"
-CAUSAL_GRAPH_DIR="${CAUSAL_GRAPH_DIR:-results/d1_long_no_wind_2015_2022/causal_graphs/global_pcmci_11vars_train}"
+PYTHON_BIN="$(resolve_python_bin)" || {
+  echo "Error: no usable Python interpreter found. Set PYTHON_BIN manually." >&2
+  exit 1
+}
+DATA_DIR="${DATA_DIR:-$(project_config_get paths.data_dir)}"
+CAUSAL_GRAPH_DIR="${CAUSAL_GRAPH_DIR:-$(project_config_get paths.results.causal_graphs_global_pcmci_11vars_train)}"
 CAUSAL_TRAIN_PATH="${CAUSAL_TRAIN_PATH:-${DATA_DIR}/splits/train.csv}"
 REBUILD_CAUSAL_GRAPH="${REBUILD_CAUSAL_GRAPH:-0}"
 
@@ -29,7 +33,7 @@ fi
 
 cd "${PROJECT_ROOT}"
 
-if [[ "${REBUILD_CAUSAL_GRAPH}" == "1" || ! -f "${CAUSAL_GRAPH_DIR}/global_causal_adjacency.csv" ]]; then
+if [[ "${REBUILD_CAUSAL_GRAPH}" == "1" || ! -f "$(project_path "${CAUSAL_GRAPH_DIR}")/global_causal_adjacency.csv" ]]; then
   "${PYTHON_BIN}" -u "${CAUSAL_SCRIPT}" \
     --train_path "${CAUSAL_TRAIN_PATH}" \
     --sample_scope full_train \
@@ -55,9 +59,9 @@ GRAD_CLIP="${GRAD_CLIP:-1.0}" \
 EPOCHS="${EPOCHS:-120}" \
 PATIENCE="${PATIENCE:-20}" \
 MIN_DELTA="${MIN_DELTA:-1e-5}" \
-NUM_WORKERS="${NUM_WORKERS:-0}" \
+NUM_WORKERS="${NUM_WORKERS:-$(project_config_get runtime.num_workers)}" \
 SEED="${SEED:-42}" \
-DEVICE="${DEVICE:-auto}" \
-RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-results/d1_long_no_wind_2015_2022/itransformer_global_pcmci_11vars}" \
-CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-checkpoints/d1_long_no_wind_2015_2022/itransformer_global_pcmci_11vars}" \
+DEVICE="${DEVICE:-$(project_config_get runtime.device)}" \
+RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-$(project_config_get paths.results.itransformer_global_pcmci_11vars)}" \
+CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-$(project_config_get paths.checkpoints.itransformer_global_pcmci_11vars)}" \
 bash "${RUN_SCRIPT}" --causal_graph_dir "${CAUSAL_GRAPH_DIR}"

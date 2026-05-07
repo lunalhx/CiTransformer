@@ -3,13 +3,20 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT_FALLBACK = Path(__file__).resolve().parents[1]
-os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_ROOT_FALLBACK / ".cache" / "matplotlib"))
+if str(PROJECT_ROOT_FALLBACK) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT_FALLBACK))
+
+from utils.project_config import load_project_config, resolve_project_path
+
+PROJECT_CONFIG = load_project_config()
+os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_CONFIG.get_path("paths.matplotlib_cache")))
 Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
 
 import matplotlib
@@ -60,7 +67,12 @@ EXOGENOUS_TIME_COLUMNS = {
 }
 NON_EXOGENOUS_COLUMNS = {TARGET_COLUMN, *RADIATION_COLUMNS, *WEATHER_COLUMNS}
 TIME_COLUMN_CANDIDATES = ["timestamp", "datetime", "date", "time", "Time", "DateTime"]
-DEFAULT_OUTPUT_DIR = "results/d1_long_no_wind_2015_2022/causal_graphs/global_pcmci_11vars_train"
+DEFAULT_OUTPUT_DIR = str(
+    PROJECT_CONFIG.get_path(
+        "paths.results.causal_graphs_global_pcmci_11vars_train",
+        "results/d1_long_no_wind_2015_2022/causal_graphs/global_pcmci_11vars_train",
+    )
+)
 DEFAULT_FREQ_MINUTES = 5
 BLOCKED_ATTENTION_VALUE = -1e9
 
@@ -152,8 +164,7 @@ def find_project_root() -> Path:
 
 
 def resolve_repo_path(path: str | Path, project_root: Path) -> Path:
-    candidate = Path(path).expanduser()
-    return candidate if candidate.is_absolute() else project_root / candidate
+    return resolve_project_path(path, project_root)
 
 
 def resolve_train_path(project_root: Path, train_path: str | None = None) -> Path:
@@ -164,9 +175,9 @@ def resolve_train_path(project_root: Path, train_path: str | None = None) -> Pat
         raise FileNotFoundError(f"Specified --train_path does not exist: {explicit_path}")
 
     candidates = [
-        project_root / "data/processed_long_no_wind_2015_2022/splits/train.csv",
+        PROJECT_CONFIG.get_path("paths.data_dir", "data/processed_long_no_wind_2015_2022") / "splits" / "train.csv",
         # Practical fallback for projects that store split files directly under the processed directory.
-        project_root / "data/processed_long_no_wind_2015_2022/train.csv",
+        PROJECT_CONFIG.get_path("paths.data_dir", "data/processed_long_no_wind_2015_2022") / "train.csv",
     ]
     for candidate in candidates:
         if candidate.exists():

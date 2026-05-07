@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import sys
 import time
@@ -10,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -22,6 +22,13 @@ from tqdm.auto import tqdm
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.project_config import load_project_config, resolve_project_path
+
+PROJECT_CONFIG = load_project_config()
+os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_CONFIG.get_path("paths.matplotlib_cache")))
+
+import matplotlib.pyplot as plt
 
 from models.baseline import LSTMBaseline
 from utils.datasets import (
@@ -58,7 +65,12 @@ class EarlyStopping:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train and evaluate the LSTM baseline for PV power forecasting.")
 
-    parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR, help="Directory containing split CSV files.")
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default=str(PROJECT_CONFIG.get_path("paths.data_dir", DEFAULT_DATA_DIR)),
+        help="Directory containing split CSV files.",
+    )
     parser.add_argument("--time_col", type=str, default=None, help="Optional explicit timestamp column name.")
     parser.add_argument("--target_col", type=str, default=DEFAULT_TARGET_COLUMN, help="Prediction target column.")
     parser.add_argument(
@@ -87,7 +99,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping norm. Set <=0 to disable.")
     parser.add_argument("--patience", type=int, default=8, help="Early stopping patience.")
     parser.add_argument("--min_delta", type=float, default=1e-5, help="Minimum validation loss improvement.")
-    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader workers.")
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=int(PROJECT_CONFIG.get("runtime.num_workers", 0)),
+        help="DataLoader workers.",
+    )
     parser.add_argument(
         "--log_interval",
         type=int,
@@ -105,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="auto",
+        default=str(PROJECT_CONFIG.get("runtime.device", "auto")),
         choices=["auto", "cpu", "cuda", "mps"],
         help="Training device. 'auto' picks cuda -> mps -> cpu.",
     )
@@ -113,13 +130,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--results_dir",
         type=str,
-        default="results/d1_long_no_wind_2015_2022/lstm",
+        default=str(
+            PROJECT_CONFIG.get_path(
+                "paths.results.lstm",
+                "results/d1_long_no_wind_2015_2022/lstm",
+            )
+        ),
         help="Directory for metrics/predictions/plots.",
     )
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="checkpoints/d1_long_no_wind_2015_2022/lstm/best_model.pth",
+        default=str(
+            PROJECT_CONFIG.get_path(
+                "paths.checkpoints.lstm",
+                "checkpoints/d1_long_no_wind_2015_2022/lstm",
+            )
+            / "best_model.pth"
+        ),
         help="Path to save the best checkpoint.",
     )
     parser.add_argument(
@@ -746,8 +774,7 @@ def print_dataset_summaries(datasets: dict[str, ContinuousSegmentTimeSeriesDatas
 
 
 def resolve_path(path_value: str) -> Path:
-    path = Path(path_value)
-    return path if path.is_absolute() else PROJECT_ROOT / path
+    return resolve_project_path(path_value, PROJECT_ROOT)
 
 
 def build_lstm_model(args: argparse.Namespace) -> LSTMBaseline:
