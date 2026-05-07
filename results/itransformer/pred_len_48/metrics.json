@@ -28,12 +28,12 @@
     "disable_norm": false,
     "output_attention": false,
     "dropout": 0.1,
-    "epochs": 80,
+    "epochs": 120,
     "batch_size": 256,
     "learning_rate": 0.001,
     "weight_decay": 1e-05,
     "grad_clip": 1.0,
-    "patience": 15,
+    "patience": 20,
     "min_delta": 1e-05,
     "num_workers": 0,
     "log_interval": 0,
@@ -8480,6 +8480,36 @@
       "epoch": 80,
       "train_loss": 0.08728928285201132,
       "validation_loss": 0.12305060813161292
+    },
+    {
+      "epoch": 81,
+      "train_loss": 0.08698275973302268,
+      "validation_loss": 0.11921178348425199
+    },
+    {
+      "epoch": 82,
+      "train_loss": 0.08671198726896209,
+      "validation_loss": 0.12255585454147787
+    },
+    {
+      "epoch": 83,
+      "train_loss": 0.0868080383036288,
+      "validation_loss": 0.12067910547332766
+    },
+    {
+      "epoch": 84,
+      "train_loss": 0.0867835087145153,
+      "validation_loss": 0.12794264009626685
+    },
+    {
+      "epoch": 85,
+      "train_loss": 0.08781997988792255,
+      "validation_loss": 0.12088855724200961
+    },
+    {
+      "epoch": 86,
+      "train_loss": 0.08647749639254051,
+      "validation_loss": 0.12723863564778443
     }
   ],
   "checkpoint_path": "/home/lunalhx/projects/CiTransformer/checkpoints/itransformer/pred_len_48/best_model.pth"
