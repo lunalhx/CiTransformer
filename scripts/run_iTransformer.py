@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -16,6 +16,13 @@ from torch import nn
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.project_config import load_project_config, resolve_project_path
+
+PROJECT_CONFIG = load_project_config()
+os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_CONFIG.get_path("paths.matplotlib_cache")))
+
+import matplotlib.pyplot as plt
 
 from models.baseline import ITransformerBaseline
 from scripts.run_lstm import (
@@ -42,7 +49,12 @@ def parse_args() -> argparse.Namespace:
         description="Train and evaluate the vanilla iTransformer baseline for PV power forecasting."
     )
 
-    parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR, help="Directory containing split CSV files.")
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default=str(PROJECT_CONFIG.get_path("paths.data_dir", DEFAULT_DATA_DIR)),
+        help="Directory containing split CSV files.",
+    )
     parser.add_argument("--time_col", type=str, default=None, help="Optional explicit timestamp column name.")
     parser.add_argument("--target_col", type=str, default=DEFAULT_TARGET_COLUMN, help="Prediction target column.")
     parser.add_argument(
@@ -100,7 +112,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping norm. Set <=0 to disable.")
     parser.add_argument("--patience", type=int, default=8, help="Early stopping patience.")
     parser.add_argument("--min_delta", type=float, default=1e-5, help="Minimum validation loss improvement.")
-    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader workers.")
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=int(PROJECT_CONFIG.get("runtime.num_workers", 0)),
+        help="DataLoader workers.",
+    )
     parser.add_argument(
         "--log_interval",
         type=int,
@@ -118,7 +135,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="auto",
+        default=str(PROJECT_CONFIG.get("runtime.device", "auto")),
         choices=["auto", "cpu", "cuda", "mps"],
         help="Training device. 'auto' picks cuda -> mps -> cpu.",
     )
@@ -126,13 +143,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--results_dir",
         type=str,
-        default="results/d1_long_no_wind_2015_2022/itransformer",
+        default=str(
+            PROJECT_CONFIG.get_path(
+                "paths.results.itransformer",
+                "results/d1_long_no_wind_2015_2022/itransformer",
+            )
+        ),
         help="Directory for metrics/predictions/plots.",
     )
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="checkpoints/d1_long_no_wind_2015_2022/itransformer/best_model.pth",
+        default=str(
+            PROJECT_CONFIG.get_path(
+                "paths.checkpoints.itransformer",
+                "checkpoints/d1_long_no_wind_2015_2022/itransformer",
+            )
+            / "best_model.pth"
+        ),
         help="Path to save the best checkpoint.",
     )
     parser.add_argument(
@@ -298,8 +326,7 @@ def save_prediction_plot(
 
 
 def resolve_path(path_value: str) -> Path:
-    path = Path(path_value)
-    return path if path.is_absolute() else PROJECT_ROOT / path
+    return resolve_project_path(path_value, PROJECT_ROOT)
 
 
 def build_eval_args_from_checkpoint(cli_args: argparse.Namespace, checkpoint_args: dict[str, Any]) -> argparse.Namespace:

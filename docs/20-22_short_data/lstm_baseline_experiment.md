@@ -110,7 +110,7 @@ target = [t+1, ..., t+pred_len]
 本次运行命令：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 bash scripts/run_lstm_experiments.sh
 ```
 
@@ -297,7 +297,7 @@ The LSTM baseline is trained only on the training split, with the validation spl
 为避免覆盖第 7-13 节记录的默认参数实验，当前补充实验单独输出到新的结果目录：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 LEARNING_RATE=3e-4 \
 EPOCHS=60 \
 PATIENCE=12 \

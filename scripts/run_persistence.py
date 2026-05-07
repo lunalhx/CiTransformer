@@ -28,6 +28,9 @@ from scripts.run_lstm import (
     set_random_seed,
 )
 from utils.datasets import DEFAULT_DATA_DIR, DEFAULT_FEATURE_COLUMNS, DEFAULT_TARGET_COLUMN
+from utils.project_config import load_project_config, resolve_project_path
+
+PROJECT_CONFIG = load_project_config()
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +38,12 @@ def parse_args() -> argparse.Namespace:
         description="Evaluate the persistence / naive baseline for PV power forecasting."
     )
 
-    parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR, help="Directory containing split CSV files.")
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default=str(PROJECT_CONFIG.get_path("paths.data_dir", DEFAULT_DATA_DIR)),
+        help="Directory containing split CSV files.",
+    )
     parser.add_argument("--time_col", type=str, default=None, help="Optional explicit timestamp column name.")
     parser.add_argument("--target_col", type=str, default=DEFAULT_TARGET_COLUMN, help="Prediction target column.")
     parser.add_argument(
@@ -54,7 +62,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument("--batch_size", type=int, default=256, help="Mini-batch size used for evaluation.")
-    parser.add_argument("--num_workers", type=int, default=0, help="DataLoader workers.")
+    parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=int(PROJECT_CONFIG.get("runtime.num_workers", 0)),
+        help="DataLoader workers.",
+    )
     parser.add_argument(
         "--seed",
         type=int,
@@ -64,14 +77,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device",
         type=str,
-        default="auto",
+        default=str(PROJECT_CONFIG.get("runtime.device", "auto")),
         choices=["auto", "cpu", "cuda", "mps"],
         help="Evaluation device. 'auto' picks cuda -> mps -> cpu.",
     )
     parser.add_argument(
         "--results_dir",
         type=str,
-        default="results/d1_long_no_wind_2015_2022/persistence",
+        default=str(
+            PROJECT_CONFIG.get_path(
+                "paths.results.persistence",
+                "results/d1_long_no_wind_2015_2022/persistence",
+            )
+        ),
         help="Directory for metrics/predictions/plots.",
     )
     parser.add_argument(
@@ -84,10 +102,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_results_dir(results_dir: str) -> Path:
-    path = Path(results_dir)
-    if path.is_absolute():
-        return path
-    return PROJECT_ROOT / path
+    return resolve_project_path(results_dir, PROJECT_ROOT)
 
 
 def get_target_feature_index(feature_cols: list[str], target_col: str) -> int:

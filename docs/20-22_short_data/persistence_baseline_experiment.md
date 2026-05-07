@@ -117,7 +117,7 @@ The calibration split is reserved for protocol consistency but is unused in the 
 本次运行命令：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 bash scripts/run_persistence_experiments.sh
 ```
 

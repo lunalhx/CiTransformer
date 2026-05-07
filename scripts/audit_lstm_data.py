@@ -23,11 +23,14 @@ from utils.datasets import (  # noqa: E402
     load_split_dataframe,
     resolve_split_dir,
 )
+from utils.project_config import load_project_config
+
+PROJECT_CONFIG = load_project_config()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Audit LSTM split, segment, and window statistics.")
-    parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR)
+    parser.add_argument("--data_dir", type=str, default=str(PROJECT_CONFIG.get_path("paths.data_dir", DEFAULT_DATA_DIR)))
     parser.add_argument("--time_col", type=str, default=None)
     parser.add_argument("--target_col", type=str, default=DEFAULT_TARGET_COLUMN)
     parser.add_argument("--feature_cols", nargs="+", default=DEFAULT_FEATURE_COLUMNS)

@@ -27,7 +27,7 @@ results/causal_graphs/global_pcmci_11vars_train
 生成命令：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 .venv/bin/python -u causal_algo/run_global_pcmci.py \
   --sample_scope full_train \
   --output_dir results/causal_graphs/global_pcmci_11vars_train
@@ -97,7 +97,7 @@ mask 统计：
 批量训练入口：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 bash scripts/run_global_pcmci_itransformer_11vars.sh
 ```
 

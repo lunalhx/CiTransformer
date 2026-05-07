@@ -114,7 +114,7 @@ target = [t+1, ..., t+pred_len]
 默认 baseline 运行入口：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 bash scripts/run_itransformer_experiments.sh
 ```
 
@@ -287,7 +287,7 @@ bash scripts/run_itransformer_experiments.sh
 运行标准调参：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 bash scripts/run_itransformer_tuning_standard.sh
 ```
 
@@ -302,7 +302,7 @@ bash scripts/run_itransformer_tuning_standard.sh
 用调参选出的最佳 checkpoint 导出 test：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 
 PYTHON_BIN=./.venv/bin/python \
 MODE=export_tuned_best \
@@ -357,7 +357,7 @@ The vanilla iTransformer baseline is trained only on the training split, with th
 调参与 test 导出命令如下：
 
 ```bash
-cd /home/lunalhx/projects/CiTransformer
+cd "${PROJECT_ROOT:-/path/to/CiTransformer}"
 EPOCHS=120 PATIENCE=20 PLAN=standard bash scripts/run_itransformer_tuning_standard.sh
 
 MODE=export_tuned_best \

@@ -30,4 +30,5 @@ statsmodels==0.14.1    # 用于 ADF 平稳性检验
 
 # --- 工具库 ---
 tqdm==4.66.2           # 训练进度条
+PyYAML==6.0.1          # 项目 YAML 配置加载
 # vanilla iTransformer 当前只走 FullAttention 路径，不需要额外安装 einops / reformer_pytorch

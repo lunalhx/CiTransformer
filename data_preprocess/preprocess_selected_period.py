@@ -19,12 +19,24 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from utils.project_config import load_project_config, resolve_project_path
 
-DEFAULT_INPUT_PATH = PROJECT_ROOT / "data" / "raw" / "91-Site_DKA-M9_B-Phase.csv"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed_selected_2020_2022"
+PROJECT_CONFIG = load_project_config()
+
+DEFAULT_INPUT_PATH = PROJECT_CONFIG.get_path(
+    "paths.raw_input_file",
+    PROJECT_ROOT / "data" / "raw" / "91-Site_DKA-M9_B-Phase.csv",
+)
+DEFAULT_OUTPUT_DIR = PROJECT_CONFIG.get_path(
+    "paths.processed_selected_dir",
+    PROJECT_ROOT / "data" / "processed_selected_2020_2022",
+)
 DEFAULT_START = "2020-01-01 00:00:00"
 DEFAULT_END = "2022-12-31 23:55:00"
-LONG_NO_WIND_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed_long_no_wind_2015_2022"
+LONG_NO_WIND_OUTPUT_DIR = PROJECT_CONFIG.get_path(
+    "paths.processed_long_no_wind_dir",
+    PROJECT_ROOT / "data" / "processed_long_no_wind_2015_2022",
+)
 LONG_NO_WIND_START = "2015-03-01 00:00:00"
 LONG_NO_WIND_END = "2022-12-31 23:55:00"
 EXPECTED_DELTA = pd.Timedelta(minutes=5)
@@ -1021,8 +1033,8 @@ def write_markdown_report(
 def main() -> None:
     args = parse_args()
     run_config = resolve_run_config(args)
-    input_path = Path(args.input_path).expanduser().resolve()
-    output_dir = Path(run_config["output_dir"]).expanduser().resolve()
+    input_path = resolve_project_path(args.input_path, PROJECT_ROOT).resolve()
+    output_dir = resolve_project_path(run_config["output_dir"], PROJECT_ROOT).resolve()
     ensure_output_dirs(output_dir)
 
     raw_selected, selection_audit = load_and_filter_raw(

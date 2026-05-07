@@ -3,6 +3,7 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${PROJECT_ROOT}/scripts/project_config.sh"
 RUN_SCRIPT="${PROJECT_ROOT}/scripts/run_iTransformer.py"
 SUMMARY_SCRIPT="${PROJECT_ROOT}/scripts/summarize_itransformer_tuning.py"
 
@@ -15,30 +16,6 @@ if [[ ! -f "${SUMMARY_SCRIPT}" ]]; then
   echo "Error: cannot find ${SUMMARY_SCRIPT}" >&2
   exit 1
 fi
-
-resolve_python_bin() {
-  if [[ -n "${PYTHON_BIN:-}" ]]; then
-    echo "${PYTHON_BIN}"
-    return 0
-  fi
-
-  if [[ -x "${PROJECT_ROOT}/.venv/bin/python" ]]; then
-    echo "${PROJECT_ROOT}/.venv/bin/python"
-    return 0
-  fi
-
-  if command -v python3 >/dev/null 2>&1; then
-    command -v python3
-    return 0
-  fi
-
-  if command -v python >/dev/null 2>&1; then
-    command -v python
-    return 0
-  fi
-
-  return 1
-}
 
 slugify_value() {
   local value="$1"
@@ -57,8 +34,7 @@ if ! "${PYTHON_BIN}" -c "import torch, pandas, matplotlib" >/dev/null 2>&1; then
   exit 1
 fi
 
-export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/citransformer-matplotlib}"
-mkdir -p "${MPLCONFIGDIR}"
+setup_matplotlib_cache
 
 PLAN="${PLAN:-minimal}"
 if [[ "${PLAN}" != "minimal" && "${PLAN}" != "standard" ]]; then
@@ -66,7 +42,7 @@ if [[ "${PLAN}" != "minimal" && "${PLAN}" != "standard" ]]; then
   exit 1
 fi
 
-DATA_DIR="${DATA_DIR:-data/processed_long_no_wind_2015_2022}"
+DATA_DIR="${DATA_DIR:-$(project_config_get paths.data_dir)}"
 SEQ_LEN="${SEQ_LEN:-96}"
 MAIN_PRED_LENS="${MAIN_PRED_LENS:-12 24 48}"
 RUN_PRED_LEN1_REF="${RUN_PRED_LEN1_REF:-1}"
@@ -87,18 +63,18 @@ GRAD_CLIP="${GRAD_CLIP:-1.0}"
 EPOCHS="${EPOCHS:-30}"
 PATIENCE="${PATIENCE:-8}"
 MIN_DELTA="${MIN_DELTA:-1e-5}"
-NUM_WORKERS="${NUM_WORKERS:-0}"
+NUM_WORKERS="${NUM_WORKERS:-$(project_config_get runtime.num_workers)}"
 LOG_INTERVAL="${LOG_INTERVAL:-0}"
 PROGRESS_MININTERVAL="${PROGRESS_MININTERVAL:-15}"
 SEED="${SEED:-42}"
-DEVICE="${DEVICE:-auto}"
+DEVICE="${DEVICE:-$(project_config_get runtime.device)}"
 TIME_COL="${TIME_COL:-}"
 SAMPLING_FREQ_MINUTES="${SAMPLING_FREQ_MINUTES:-}"
 MAX_TRAIN_BATCHES="${MAX_TRAIN_BATCHES:-}"
 MAX_EVAL_BATCHES="${MAX_EVAL_BATCHES:-}"
 
-TUNING_RESULTS_ROOT="${TUNING_RESULTS_ROOT:-results/d1_long_no_wind_2015_2022/tuning/itransformer/${PLAN}}"
-TUNING_CHECKPOINT_ROOT="${TUNING_CHECKPOINT_ROOT:-checkpoints/d1_long_no_wind_2015_2022/tuning/itransformer/${PLAN}}"
+TUNING_RESULTS_ROOT="${TUNING_RESULTS_ROOT:-$(project_config_get paths.results.tuning_itransformer)/${PLAN}}"
+TUNING_CHECKPOINT_ROOT="${TUNING_CHECKPOINT_ROOT:-$(project_config_get paths.checkpoints.tuning_itransformer)/${PLAN}}"
 SUMMARY_ROOT="${SUMMARY_ROOT:-${TUNING_RESULTS_ROOT}/summary}"
 
 read -r -a MAIN_PRED_LEN_ARRAY <<< "${MAIN_PRED_LENS//,/ }"
@@ -132,7 +108,7 @@ run_experiment() {
   local results_dir="${TUNING_RESULTS_ROOT}/pred_len_${pred_len}/${run_name}"
   local checkpoint_path="${TUNING_CHECKPOINT_ROOT}/pred_len_${pred_len}/${run_name}/best_model.pth"
 
-  if [[ "${SKIP_EXISTING}" == "1" && -f "${PROJECT_ROOT}/${results_dir}/metrics.json" ]]; then
+  if [[ "${SKIP_EXISTING}" == "1" && -f "$(project_path "${results_dir}")/metrics.json" ]]; then
     echo "Skipping existing run -> ${run_name}"
     return 0
   fi
@@ -187,8 +163,8 @@ run_experiment() {
 
   echo "======================================================================"
   echo "Running ${stage} / ${label} / pred_len=${pred_len}"
-  echo "Results    -> ${PROJECT_ROOT}/${results_dir}"
-  echo "Checkpoint -> ${PROJECT_ROOT}/${checkpoint_path}"
+  echo "Results    -> $(project_path "${results_dir}")"
+  echo "Checkpoint -> $(project_path "${checkpoint_path}")"
   echo "======================================================================"
 
   "${cmd[@]}"
@@ -302,11 +278,11 @@ echo "======================================================================"
 echo "iTransformer tuning plan -> ${PLAN}"
 echo "Validation-only tuning targets pred_len -> ${MAIN_PRED_LENS}"
 echo "Primary objective -> daytime RMSE / MAE on validation for pred_len=12, 24, and 48"
-echo "Results root -> ${PROJECT_ROOT}/${TUNING_RESULTS_ROOT}"
+echo "Results root -> $(project_path "${TUNING_RESULTS_ROOT}")"
 echo "======================================================================"
 
 run_matrix "s1" "$(stage1_matrix)"
-summarize_runs "${PROJECT_ROOT}/${SUMMARY_ROOT}/stage1" --stage_filter s1
+summarize_runs "$(project_path "${SUMMARY_ROOT}")/stage1" --stage_filter s1
 
 best_stage1_tsv="$(best_config_tsv --stage_filter s1)"
 IFS=$'\t' read -r \
@@ -345,7 +321,7 @@ run_matrix \
     "${best_n_heads}" \
     "${best_factor}")"
 
-summarize_runs "${PROJECT_ROOT}/${SUMMARY_ROOT}/final_validation"
+summarize_runs "$(project_path "${SUMMARY_ROOT}")/final_validation"
 
 if [[ "${RUN_PRED_LEN1_REF}" == "1" ]]; then
   best_overall_tsv="$(best_config_tsv)"
@@ -381,16 +357,16 @@ if [[ "${RUN_PRED_LEN1_REF}" == "1" ]]; then
     "${best_n_heads}" \
     "${best_factor}"
 
-  summarize_runs "${PROJECT_ROOT}/${SUMMARY_ROOT}/with_pred_len_1"
+  summarize_runs "$(project_path "${SUMMARY_ROOT}")/with_pred_len_1"
 fi
 
 echo
 echo "Validation-only tuning finished."
-echo "Inspect summary files under ${PROJECT_ROOT}/${SUMMARY_ROOT}"
-echo "- stage1 ranking: ${PROJECT_ROOT}/${SUMMARY_ROOT}/stage1/ranking_shared_configs.csv"
-echo "- final ranking: ${PROJECT_ROOT}/${SUMMARY_ROOT}/final_validation/ranking_shared_configs.csv"
+echo "Inspect summary files under $(project_path "${SUMMARY_ROOT}")"
+echo "- stage1 ranking: $(project_path "${SUMMARY_ROOT}")/stage1/ranking_shared_configs.csv"
+echo "- final ranking: $(project_path "${SUMMARY_ROOT}")/final_validation/ranking_shared_configs.csv"
 if [[ "${RUN_PRED_LEN1_REF}" == "1" ]]; then
-  echo "- final ranking with pred_len=1 reference: ${PROJECT_ROOT}/${SUMMARY_ROOT}/with_pred_len_1/ranking_by_pred_len.csv"
+  echo "- final ranking with pred_len=1 reference: $(project_path "${SUMMARY_ROOT}")/with_pred_len_1/ranking_by_pred_len.csv"
 fi
 echo
 echo "No test metrics were used in this tuning script."
