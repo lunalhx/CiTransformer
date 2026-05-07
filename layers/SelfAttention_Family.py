@@ -151,6 +151,45 @@ class FullAttention(nn.Module):
         self.output_attention = output_attention
         self.dropout = nn.Dropout(attention_dropout)
 
+    @staticmethod
+    def _expand_tensor_mask(mask, scores):
+        if mask.ndim == 2:
+            mask = mask.unsqueeze(0).unsqueeze(0)
+        elif mask.ndim == 3:
+            mask = mask.unsqueeze(1)
+        elif mask.ndim != 4:
+            raise ValueError(
+                f"Attention mask must have 2, 3, or 4 dimensions, got shape {tuple(mask.shape)}."
+            )
+
+        if mask.shape[-2:] != scores.shape[-2:]:
+            raise ValueError(
+                f"Attention mask trailing shape {tuple(mask.shape[-2:])} does not match "
+                f"attention scores shape {tuple(scores.shape[-2:])}."
+            )
+        return mask.to(device=scores.device)
+
+    def _apply_attention_mask(self, scores, attn_mask):
+        if attn_mask is None:
+            return scores
+
+        if hasattr(attn_mask, "mask"):
+            mask = attn_mask.mask.to(device=scores.device)
+            return scores.masked_fill(mask, -np.inf)
+
+        if not torch.is_tensor(attn_mask):
+            raise TypeError(f"Unsupported attention mask type: {type(attn_mask)!r}.")
+
+        mask = self._expand_tensor_mask(attn_mask, scores)
+        if mask.dtype == torch.bool:
+            return scores.masked_fill(mask, -np.inf)
+
+        mask = mask.to(dtype=scores.dtype)
+        finite_mask = mask[torch.isfinite(mask)]
+        if finite_mask.numel() > 0 and finite_mask.min() >= 0.0 and finite_mask.max() <= 1.0:
+            return scores.masked_fill(mask <= 0.0, -np.inf)
+        return scores + mask
+
     def forward(self, queries, keys, values, attn_mask, tau=None, delta=None):
         B, L, H, E = queries.shape
         _, S, _, D = values.shape
@@ -158,11 +197,10 @@ class FullAttention(nn.Module):
 
         scores = torch.einsum("blhe,bshe->bhls", queries, keys)
 
-        if self.mask_flag:
-            if attn_mask is None:
-                attn_mask = TriangularCausalMask(B, L, device=queries.device)
-
-            scores.masked_fill_(attn_mask.mask, -np.inf)
+        if attn_mask is not None:
+            scores = self._apply_attention_mask(scores, attn_mask)
+        elif self.mask_flag:
+            scores = self._apply_attention_mask(scores, TriangularCausalMask(B, L, device=queries.device))
 
         A = self.dropout(torch.softmax(scale * scores, dim=-1))
         V = torch.einsum("bhls,bshd->blhd", A, values)

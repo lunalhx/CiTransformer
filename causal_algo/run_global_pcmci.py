@@ -40,17 +40,27 @@ VARIABLES = [
     "Weather_T",
     "Weather_R",
     "solar_elevation",
+    "sin_time_of_day",
+    "cos_time_of_day",
     "sin_day_of_year",
     "cos_day_of_year",
+    "day_night_label",
 ]
 
 TARGET_COLUMN = "Active_Pow"
 RADIATION_COLUMNS = {"Radiation_Global_Tilted", "Radiation_Diffuse_Tilted"}
 WEATHER_COLUMNS = {"Weather_T", "Weather_R"}
-EXOGENOUS_TIME_COLUMNS = {"solar_elevation", "sin_day_of_year", "cos_day_of_year"}
+EXOGENOUS_TIME_COLUMNS = {
+    "solar_elevation",
+    "sin_time_of_day",
+    "cos_time_of_day",
+    "sin_day_of_year",
+    "cos_day_of_year",
+    "day_night_label",
+}
 NON_EXOGENOUS_COLUMNS = {TARGET_COLUMN, *RADIATION_COLUMNS, *WEATHER_COLUMNS}
 TIME_COLUMN_CANDIDATES = ["timestamp", "datetime", "date", "time", "Time", "DateTime"]
-DEFAULT_OUTPUT_DIR = "results/causal_graphs/global_pcmci"
+DEFAULT_OUTPUT_DIR = "results/causal_graphs/global_pcmci_11vars_train"
 DEFAULT_FREQ_MINUTES = 5
 BLOCKED_ATTENTION_VALUE = -1e9
 
@@ -109,7 +119,7 @@ def parse_args() -> argparse.Namespace:
         "--min_segment_length",
         type=int,
         default=24,
-        help="Drop continuous daytime segments shorter than this many rows before PCMCI.",
+        help="Drop continuous selected-data segments shorter than this many rows before PCMCI.",
     )
     parser.add_argument(
         "--freq_minutes",
@@ -122,6 +132,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=DEFAULT_OUTPUT_DIR,
         help="Directory where graph, CSV, NPY and JSON outputs are saved.",
+    )
+    parser.add_argument(
+        "--sample_scope",
+        type=str,
+        default="full_train",
+        choices=["full_train", "daytime"],
+        help="Rows used for PCMCI. full_train uses every train row; daytime preserves the old day_night/solar filter.",
     )
     return parser.parse_args()
 
@@ -220,6 +237,14 @@ def filter_daytime(df: pd.DataFrame) -> pd.DataFrame:
     return daytime_df
 
 
+def select_pcmci_rows(df: pd.DataFrame, sample_scope: str) -> tuple[pd.DataFrame, str]:
+    if sample_scope == "full_train":
+        return df.copy(), "full train split; no daytime filtering"
+    if sample_scope == "daytime":
+        return filter_daytime(df), "day_night_label == 1 if available, otherwise solar_elevation > 0"
+    raise ValueError(f"Unsupported sample_scope: {sample_scope}")
+
+
 def split_continuous_segments(
     df: pd.DataFrame,
     time_col: str,
@@ -253,7 +278,7 @@ def split_continuous_segments(
     if not kept_segments:
         longest = max(all_lengths) if all_lengths else 0
         raise ValueError(
-            "No continuous daytime segments satisfy --min_segment_length. "
+            "No continuous selected-data segments satisfy --min_segment_length. "
             f"Expected interval: {expected_delta}. Total segments: {len(all_lengths)}. "
             f"Longest segment length: {longest}."
         )
@@ -276,7 +301,7 @@ def prepare_pcmci_dataframe(
     constant_columns = [column for column in variables if pd.isna(std[column]) or np.isclose(std[column], 0.0)]
     if constant_columns:
         raise ValueError(
-            "PCMCI variables contain constants after daytime filtering, which makes ParCorr ill-conditioned.\n"
+            "PCMCI variables contain constants after row filtering, which makes ParCorr ill-conditioned.\n"
             f"Constant columns: {constant_columns}"
         )
 
@@ -321,9 +346,10 @@ def build_physical_prior(variables: list[str]) -> dict[str, Any]:
         "weather": sorted(WEATHER_COLUMNS & set(variables)),
         "exogenous_time": sorted(EXOGENOUS_TIME_COLUMNS & set(variables)),
         "rules": [
+            "Exogenous time/label variables may point into target, radiation, and weather variables.",
+            "No variable may point into exogenous time/label variables, except each variable attends to itself in the final mask.",
+            "Cross edges among exogenous time/label variables are removed.",
             "Active_Pow cannot point to radiation, weather, or exogenous time variables.",
-            "No variable may point into exogenous time variables, except each variable attends to itself in the final mask.",
-            "Cross edges among exogenous time variables are removed.",
             "Non-exogenous variables may keep lagged autoregressive edges.",
             "Radiation, weather, and exogenous time variables may point into Active_Pow.",
             "solar_elevation may point into tilted radiation variables.",
@@ -343,14 +369,14 @@ def is_edge_allowed(source: str, target: str, lag: int) -> bool:
     if target in EXOGENOUS_TIME_COLUMNS:
         return False
 
+    if source in EXOGENOUS_TIME_COLUMNS:
+        return target in NON_EXOGENOUS_COLUMNS
+
     if source == TARGET_COLUMN and target != TARGET_COLUMN:
         return False
 
-    if source in EXOGENOUS_TIME_COLUMNS and target in EXOGENOUS_TIME_COLUMNS:
-        return False
-
     if target == TARGET_COLUMN:
-        return source in (RADIATION_COLUMNS | WEATHER_COLUMNS | EXOGENOUS_TIME_COLUMNS)
+        return source in (RADIATION_COLUMNS | WEATHER_COLUMNS)
 
     if target in RADIATION_COLUMNS:
         return source in ({"solar_elevation"} | WEATHER_COLUMNS)
@@ -569,7 +595,7 @@ def plot_causal_graph(edges: pd.DataFrame, variables: list[str], output_path: Pa
     edge_labels = nx.get_edge_attributes(graph, "label")
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels, font_size=8, label_pos=0.55)
 
-    plt.title("Global PCMCI Causal Graph (train daytime only)", fontsize=14)
+    plt.title("Global PCMCI Causal Graph (train only)", fontsize=14)
     plt.axis("off")
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -648,7 +674,8 @@ def print_final_report(
     paths: dict[str, Path],
     train_path: Path,
     rows_loaded: int,
-    daytime_rows: int,
+    selected_rows: int,
+    sample_scope: str,
     segment_count: int,
     variables: list[str],
     args: argparse.Namespace,
@@ -670,7 +697,8 @@ def print_final_report(
     print("\nGlobal PCMCI finished.")
     print(f"Data path: {train_path}")
     print(f"Raw train samples: {rows_loaded}")
-    print(f"Daytime-only samples: {daytime_rows}")
+    print(f"Sample scope: {sample_scope}")
+    print(f"Selected train samples: {selected_rows}")
     print(f"Continuous segments kept: {segment_count}")
     print(f"PCMCI variables: {variables}")
     print(f"tau_min / tau_max: {args.tau_min} / {args.tau_max}")
@@ -696,24 +724,24 @@ def main() -> None:
     train_df, time_col, rows_loaded = load_train_data(train_path)
     validate_required_columns(train_df, VARIABLES)
 
-    daytime_df = filter_daytime(train_df)
-    daytime_rows = len(daytime_df)
-    if daytime_rows <= args.min_segment_length:
+    pcmci_candidate_df, row_filter_description = select_pcmci_rows(train_df, sample_scope=args.sample_scope)
+    selected_rows = len(pcmci_candidate_df)
+    if selected_rows <= args.min_segment_length:
         raise ValueError(
-            "Daytime data is too small for global PCMCI after filtering. "
-            f"Rows: {daytime_rows}, min_segment_length: {args.min_segment_length}."
+            "Selected data is too small for global PCMCI. "
+            f"Rows: {selected_rows}, min_segment_length: {args.min_segment_length}."
         )
 
-    missing_mask = daytime_df[VARIABLES].isna().any(axis=1)
+    missing_mask = pcmci_candidate_df[VARIABLES].isna().any(axis=1)
     dropped_missing_rows = int(missing_mask.sum())
     if dropped_missing_rows:
         print(
-            f"Dropping {dropped_missing_rows} daytime rows with missing PCMCI variables before segment detection; "
+            f"Dropping {dropped_missing_rows} selected train rows with missing PCMCI variables before segment detection; "
             "dropped rows become natural time gaps."
         )
-    pcmci_source_df = daytime_df.loc[~missing_mask].copy()
+    pcmci_source_df = pcmci_candidate_df.loc[~missing_mask].copy()
     if pcmci_source_df.empty:
-        raise ValueError("No usable daytime rows remain after dropping missing PCMCI variables.")
+        raise ValueError("No usable train rows remain after dropping missing PCMCI variables.")
 
     segments, all_segment_lengths, dropped_short_segments = split_continuous_segments(
         pcmci_source_df,
@@ -760,12 +788,13 @@ def main() -> None:
         "output_dir": str(output_dir),
         "time_column": time_col,
         "sample_policy": "train.csv only; validation/calibration/test are never read",
-        "daytime_filter": "day_night_label == 1 if available, otherwise solar_elevation > 0",
+        "sample_scope": args.sample_scope,
+        "row_filter": row_filter_description,
         "freq_minutes": args.freq_minutes,
         "raw_train_samples": rows_loaded,
-        "daytime_only_samples": daytime_rows,
+        "selected_train_samples": selected_rows,
         "rows_used_in_pcmci": prepared.rows_used,
-        "total_segments_after_daytime_filter": len(all_segment_lengths),
+        "total_segments_after_filter": len(all_segment_lengths),
         "continuous_segments_kept": prepared.segment_count,
         "segments_dropped_for_being_short": dropped_short_segments,
         "segment_lengths_all": all_segment_lengths,
@@ -790,7 +819,7 @@ def main() -> None:
         },
         "physical_prior": build_physical_prior(VARIABLES),
         "standard_scaler": {
-            "fit_scope": "train daytime continuous segments only",
+            "fit_scope": f"train {args.sample_scope} continuous segments only",
             "mean": prepared.scaler_mean,
             "scale": prepared.scaler_scale,
         },
@@ -814,7 +843,8 @@ def main() -> None:
         paths=paths,
         train_path=train_path,
         rows_loaded=rows_loaded,
-        daytime_rows=daytime_rows,
+        selected_rows=selected_rows,
+        sample_scope=args.sample_scope,
         segment_count=prepared.segment_count,
         variables=VARIABLES,
         args=args,
