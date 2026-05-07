@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--root_dir",
         type=str,
-        default="results/tuning/itransformer",
+        default="results/d1_long_no_wind_2015_2022/tuning/itransformer",
         help="Root directory that contains tuning experiment subdirectories.",
     )
     parser.add_argument(

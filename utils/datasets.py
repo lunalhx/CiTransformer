@@ -26,7 +26,7 @@ DEFAULT_FEATURE_COLUMNS = [
 ]
 
 DEFAULT_TARGET_COLUMN = "Active_Pow"
-DEFAULT_DATA_DIR = "data/processed_selected_2020_2022"
+DEFAULT_DATA_DIR = "data/processed_long_no_wind_2015_2022"
 TIME_COLUMN_CANDIDATES = ("timestamp", "datetime", "date", "time", "ds")
 
 

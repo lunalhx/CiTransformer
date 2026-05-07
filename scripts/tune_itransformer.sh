@@ -66,7 +66,7 @@ if [[ "${PLAN}" != "minimal" && "${PLAN}" != "standard" ]]; then
   exit 1
 fi
 
-DATA_DIR="${DATA_DIR:-data/processed_selected_2020_2022}"
+DATA_DIR="${DATA_DIR:-data/processed_long_no_wind_2015_2022}"
 SEQ_LEN="${SEQ_LEN:-96}"
 MAIN_PRED_LENS="${MAIN_PRED_LENS:-12 24 48}"
 RUN_PRED_LEN1_REF="${RUN_PRED_LEN1_REF:-1}"
@@ -97,8 +97,8 @@ SAMPLING_FREQ_MINUTES="${SAMPLING_FREQ_MINUTES:-}"
 MAX_TRAIN_BATCHES="${MAX_TRAIN_BATCHES:-}"
 MAX_EVAL_BATCHES="${MAX_EVAL_BATCHES:-}"
 
-TUNING_RESULTS_ROOT="${TUNING_RESULTS_ROOT:-results/tuning/itransformer/${PLAN}}"
-TUNING_CHECKPOINT_ROOT="${TUNING_CHECKPOINT_ROOT:-checkpoints/tuning/itransformer/${PLAN}}"
+TUNING_RESULTS_ROOT="${TUNING_RESULTS_ROOT:-results/d1_long_no_wind_2015_2022/tuning/itransformer/${PLAN}}"
+TUNING_CHECKPOINT_ROOT="${TUNING_CHECKPOINT_ROOT:-checkpoints/d1_long_no_wind_2015_2022/tuning/itransformer/${PLAN}}"
 SUMMARY_ROOT="${SUMMARY_ROOT:-${TUNING_RESULTS_ROOT}/summary}"
 
 read -r -a MAIN_PRED_LEN_ARRAY <<< "${MAIN_PRED_LENS//,/ }"

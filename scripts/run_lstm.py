@@ -110,11 +110,16 @@ def parse_args() -> argparse.Namespace:
         help="Training device. 'auto' picks cuda -> mps -> cpu.",
     )
 
-    parser.add_argument("--results_dir", type=str, default="results/lstm", help="Directory for metrics/predictions/plots.")
+    parser.add_argument(
+        "--results_dir",
+        type=str,
+        default="results/d1_long_no_wind_2015_2022/lstm",
+        help="Directory for metrics/predictions/plots.",
+    )
     parser.add_argument(
         "--checkpoint_path",
         type=str,
-        default="checkpoints/lstm/best_model.pth",
+        default="checkpoints/d1_long_no_wind_2015_2022/lstm/best_model.pth",
         help="Path to save the best checkpoint.",
     )
     parser.add_argument(

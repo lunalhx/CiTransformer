@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--results_dir",
         type=str,
-        default="results/persistence",
+        default="results/d1_long_no_wind_2015_2022/persistence",
         help="Directory for metrics/predictions/plots.",
     )
     parser.add_argument(
