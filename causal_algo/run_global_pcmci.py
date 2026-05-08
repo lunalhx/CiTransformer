@@ -92,10 +92,19 @@ class PreparedPCMCIData:
     scaler_scale: list[float]
 
 
+@dataclass
+class ExtractedPCMCIEdges:
+    raw_lag_edges: list[dict[str, Any]]
+    prior_allowed_lag_edges: list[dict[str, Any]]
+    raw_significant_count: int
+    filtered_by_prior_count: int
+    effective_p_matrix_source: str
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Build a train-only global PCMCI causal graph for PV power forecasting "
+            "Build a train-only global PCMCI-derived temporal dependency graph for PV power forecasting "
             "and export a variable-level causal mask for iTransformer attention."
         )
     )
@@ -430,13 +439,18 @@ def run_pcmci(
 
 
 def get_effective_p_matrix(results: dict[str, Any], fdr_method: str) -> np.ndarray:
+    matrix, _ = get_effective_p_matrix_with_source(results, fdr_method=fdr_method)
+    return matrix
+
+
+def get_effective_p_matrix_with_source(results: dict[str, Any], fdr_method: str) -> tuple[np.ndarray, str]:
     p_matrix = np.asarray(results["p_matrix"], dtype=np.float64)
     # Tigramite versions differ slightly in naming; prefer explicitly corrected values if present.
     if fdr_method != "none":
         for key in ("q_matrix", "p_matrix_corrected", "corrected_p_matrix"):
             if key in results:
-                return np.asarray(results[key], dtype=np.float64)
-    return p_matrix
+                return np.asarray(results[key], dtype=np.float64), key
+    return p_matrix, "p_matrix"
 
 
 def extract_significant_edges(
@@ -446,41 +460,54 @@ def extract_significant_edges(
     tau_min: int,
     tau_max: int,
     fdr_method: str,
-) -> tuple[list[dict[str, Any]], int, int]:
-    p_matrix = get_effective_p_matrix(results, fdr_method=fdr_method)
+) -> ExtractedPCMCIEdges:
+    raw_p_matrix = np.asarray(results["p_matrix"], dtype=np.float64)
+    p_matrix, effective_source = get_effective_p_matrix_with_source(results, fdr_method=fdr_method)
     val_matrix = np.asarray(results["val_matrix"], dtype=np.float64)
 
     raw_significant_count = 0
     filtered_by_prior_count = 0
-    edges: list[dict[str, Any]] = []
+    raw_lag_edges: list[dict[str, Any]] = []
+    prior_allowed_lag_edges: list[dict[str, Any]] = []
     max_available_tau = min(tau_max, p_matrix.shape[2] - 1)
 
     for source_idx, source in enumerate(variables):
         for target_idx, target in enumerate(variables):
             for lag in range(max(1, tau_min), max_available_tau + 1):
                 p_value = p_matrix[source_idx, target_idx, lag]
+                raw_p_value = raw_p_matrix[source_idx, target_idx, lag]
                 val = val_matrix[source_idx, target_idx, lag]
                 if not np.isfinite(p_value) or p_value >= alpha_level:
                     continue
 
                 raw_significant_count += 1
                 allowed = is_edge_allowed(source=source, target=target, lag=lag)
+                edge_record = {
+                    "source": source,
+                    "target": target,
+                    "lag": int(lag),
+                    "mci": float(val) if np.isfinite(val) else np.nan,
+                    "abs_mci": float(abs(val)) if np.isfinite(val) else np.nan,
+                    "raw_p_value": float(raw_p_value) if np.isfinite(raw_p_value) else np.nan,
+                    "p_value": float(p_value),
+                    "effective_p_value": float(p_value),
+                    "effective_p_source": effective_source,
+                    "allowed_by_physical_prior": bool(allowed),
+                }
+                raw_lag_edges.append(edge_record)
                 if not allowed:
                     filtered_by_prior_count += 1
                     continue
 
-                edges.append(
-                    {
-                        "source": source,
-                        "target": target,
-                        "lag": int(lag),
-                        "mci": float(val) if np.isfinite(val) else np.nan,
-                        "abs_mci": float(abs(val)) if np.isfinite(val) else np.nan,
-                        "p_value": float(p_value),
-                    }
-                )
+                prior_allowed_lag_edges.append(edge_record)
 
-    return edges, raw_significant_count, filtered_by_prior_count
+    return ExtractedPCMCIEdges(
+        raw_lag_edges=raw_lag_edges,
+        prior_allowed_lag_edges=prior_allowed_lag_edges,
+        raw_significant_count=raw_significant_count,
+        filtered_by_prior_count=filtered_by_prior_count,
+        effective_p_matrix_source=effective_source,
+    )
 
 
 def aggregate_lag_edges(edges: list[dict[str, Any]]) -> pd.DataFrame:
@@ -606,7 +633,7 @@ def plot_causal_graph(edges: pd.DataFrame, variables: list[str], output_path: Pa
     edge_labels = nx.get_edge_attributes(graph, "label")
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels, font_size=8, label_pos=0.55)
 
-    plt.title("Global PCMCI Causal Graph (train only)", fontsize=14)
+    plt.title("Prior-Constrained PCMCI-Derived Dependency Graph (train only)", fontsize=14)
     plt.axis("off")
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -623,6 +650,9 @@ def dataframe_to_json_records(df: pd.DataFrame) -> list[dict[str, Any]]:
 def save_outputs(
     output_dir: Path,
     results: dict[str, Any],
+    fdr_method: str,
+    raw_lag_edges: list[dict[str, Any]],
+    prior_allowed_lag_edges: list[dict[str, Any]],
     aggregated_edges: pd.DataFrame,
     topk_edges: pd.DataFrame,
     adjacency: pd.DataFrame,
@@ -634,7 +664,12 @@ def save_outputs(
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "raw_p_matrix": output_dir / "raw_p_matrix.npy",
+        "effective_p_matrix": output_dir / "effective_p_matrix.npy",
         "raw_val_matrix": output_dir / "raw_val_matrix.npy",
+        "raw_significant_lag_edges": output_dir / "raw_significant_lag_edges.csv",
+        "prior_allowed_lag_edges": output_dir / "prior_allowed_lag_edges.csv",
+        "prior_filtered_aggregated_edges": output_dir / "prior_filtered_aggregated_edges.csv",
+        "topk_final_edges": output_dir / "topk_final_edges.csv",
         "edges": output_dir / "global_causal_edges.csv",
         "adjacency": output_dir / "global_causal_adjacency.csv",
         "mask": output_dir / "global_causal_mask.npy",
@@ -645,8 +680,26 @@ def save_outputs(
     }
 
     np.save(paths["raw_p_matrix"], np.asarray(results["p_matrix"], dtype=np.float64))
+    np.save(paths["effective_p_matrix"], get_effective_p_matrix(results, fdr_method=fdr_method))
     np.save(paths["raw_val_matrix"], np.asarray(results["val_matrix"], dtype=np.float64))
 
+    raw_lag_columns = [
+        "source",
+        "target",
+        "lag",
+        "mci",
+        "abs_mci",
+        "raw_p_value",
+        "p_value",
+        "effective_p_value",
+        "effective_p_source",
+        "allowed_by_physical_prior",
+    ]
+    pd.DataFrame(raw_lag_edges, columns=raw_lag_columns).to_csv(paths["raw_significant_lag_edges"], index=False)
+    pd.DataFrame(prior_allowed_lag_edges, columns=raw_lag_columns).to_csv(paths["prior_allowed_lag_edges"], index=False)
+    aggregated_edges.to_csv(paths["prior_filtered_aggregated_edges"], index=False)
+    topk_edges.to_csv(paths["topk_final_edges"], index=False)
+    # Backward-compatible alias consumed by existing reports and ad-hoc scripts.
     topk_edges.to_csv(paths["edges"], index=False)
     adjacency.to_csv(paths["adjacency"], index=True, index_label="target\\source")
     np.save(paths["mask"], binary_mask)
@@ -776,7 +829,7 @@ def main() -> None:
         fdr_method=args.fdr_method,
     )
 
-    lag_edges, raw_significant_count, filtered_by_prior_count = extract_significant_edges(
+    extracted_edges = extract_significant_edges(
         results=results,
         variables=VARIABLES,
         alpha_level=args.alpha_level,
@@ -784,7 +837,7 @@ def main() -> None:
         tau_max=args.tau_max,
         fdr_method=args.fdr_method,
     )
-    aggregated_edges = aggregate_lag_edges(lag_edges)
+    aggregated_edges = aggregate_lag_edges(extracted_edges.prior_allowed_lag_edges)
     topk_edges = apply_topk_filter(aggregated_edges, topk_active=args.topk_active, topk_other=args.topk_other)
     adjacency = build_adjacency_matrix(topk_edges, VARIABLES)
     binary_mask, additive_mask = build_attention_masks(adjacency)
@@ -819,10 +872,18 @@ def main() -> None:
         "fdr_method": args.fdr_method,
         "topk_active": args.topk_active,
         "topk_other": args.topk_other,
-        "raw_significant_lag_edges": raw_significant_count,
-        "physical_prior_filtered_lag_edges": filtered_by_prior_count,
+        "raw_significant_lag_edges": extracted_edges.raw_significant_count,
+        "physical_prior_filtered_lag_edges": extracted_edges.filtered_by_prior_count,
+        "prior_allowed_lag_edges": int(len(extracted_edges.prior_allowed_lag_edges)),
         "aggregated_edges_before_topk": int(len(aggregated_edges)),
         "aggregated_edges_after_topk": int(len(topk_edges)),
+        "effective_p_matrix_source": extracted_edges.effective_p_matrix_source,
+        "graph_semantics": (
+            "Prior-constrained PCMCI-derived Granger-style temporal dependency graph. "
+            "Lag-level PCMCI links X(t-lag)->Y(t) are aggregated into a variable-level iTransformer "
+            "attention permission mask; this is not a lag-aware attention mask and should not be "
+            "reported as a definitive structural causal graph."
+        ),
         "adjacency_direction": "adjacency[target, source] = 1; target query may attend to source key/value",
         "mask_format": {
             "global_causal_mask.npy": "binary adjacency, 1=allowed, 0=blocked",
@@ -841,6 +902,9 @@ def main() -> None:
     paths = save_outputs(
         output_dir=output_dir,
         results=results,
+        fdr_method=args.fdr_method,
+        raw_lag_edges=extracted_edges.raw_lag_edges,
+        prior_allowed_lag_edges=extracted_edges.prior_allowed_lag_edges,
         aggregated_edges=aggregated_edges,
         topk_edges=topk_edges,
         adjacency=adjacency,
@@ -859,8 +923,8 @@ def main() -> None:
         segment_count=prepared.segment_count,
         variables=VARIABLES,
         args=args,
-        raw_significant_count=raw_significant_count,
-        filtered_by_prior_count=filtered_by_prior_count,
+        raw_significant_count=extracted_edges.raw_significant_count,
+        filtered_by_prior_count=extracted_edges.filtered_by_prior_count,
         topk_edges=topk_edges,
     )
 
