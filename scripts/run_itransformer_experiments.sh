@@ -60,6 +60,8 @@ MAX_TRAIN_BATCHES="${MAX_TRAIN_BATCHES:-}"
 MAX_EVAL_BATCHES="${MAX_EVAL_BATCHES:-}"
 DISABLE_NORM="${DISABLE_NORM:-0}"
 OUTPUT_ATTENTION="${OUTPUT_ATTENTION:-0}"
+CAUSAL_MASK_MODE="${CAUSAL_MASK_MODE:-hard}"
+CAUSAL_MASK_BETA="${CAUSAL_MASK_BETA:-1.0}"
 
 if [[ "${MODE}" != "train" && "${MODE}" != "export_tuned_best" ]]; then
   echo "Error: MODE must be one of: train, export_tuned_best" >&2
@@ -202,6 +204,9 @@ run_train_case() {
     cmd+=(--output_attention)
   fi
 
+  cmd+=(--causal_mask_mode "${CAUSAL_MASK_MODE}")
+  cmd+=(--causal_mask_beta "${CAUSAL_MASK_BETA}")
+
   if [[ "$#" -gt 1 ]]; then
     cmd+=("${@:2}")
   fi
@@ -238,6 +243,8 @@ run_export_case() {
     --report_split "${REPORT_SPLIT}"
     --device "${DEVICE}"
     --num_workers "${NUM_WORKERS}"
+    --causal_mask_mode "${CAUSAL_MASK_MODE}"
+    --causal_mask_beta "${CAUSAL_MASK_BETA}"
     --progress_mininterval "${PROGRESS_MININTERVAL}"
     --experiment_name "tuned_sharedbest_pred_len_${pred_len}"
   )

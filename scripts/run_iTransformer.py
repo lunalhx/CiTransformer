@@ -104,6 +104,22 @@ def parse_args() -> argparse.Namespace:
             "causal mask is injected into iTransformer attention."
         ),
     )
+    parser.add_argument(
+        "--causal_mask_mode",
+        type=str,
+        default="hard",
+        choices=["none", "hard", "soft_bias"],
+        help=(
+            "How to inject the causal graph into attention. 'hard' blocks non-edges, 'soft_bias' adds a finite "
+            "negative bias to non-edges, and 'none' disables causal attention masking."
+        ),
+    )
+    parser.add_argument(
+        "--causal_mask_beta",
+        type=float,
+        default=1.0,
+        help="Finite negative bias magnitude used only when --causal_mask_mode soft_bias.",
+    )
 
     parser.add_argument("--epochs", type=int, default=30, help="Maximum training epochs.")
     parser.add_argument("--batch_size", type=int, default=256, help="Mini-batch size.")
@@ -221,7 +237,15 @@ def get_target_feature_index(feature_cols: list[str], target_col: str) -> int:
 def load_causal_attention_mask(
     causal_graph_dir: str | None,
     feature_cols: list[str],
+    mode: str = "hard",
+    beta: float = 1.0,
+    d_model: int | None = None,
+    n_heads: int | None = None,
 ) -> tuple[torch.Tensor | None, dict[str, Any] | None]:
+    if mode not in {"none", "hard", "soft_bias"}:
+        raise ValueError(f"Unsupported causal_mask_mode: {mode}")
+    if mode == "soft_bias" and beta <= 0.0:
+        raise ValueError("--causal_mask_beta must be positive when --causal_mask_mode soft_bias.")
     if causal_graph_dir is None:
         return None, None
 
@@ -255,26 +279,61 @@ def load_causal_attention_mask(
     if np.any(np.diag(matrix) <= 0.0):
         raise ValueError("Causal adjacency diagonal must be positive so every variable can attend to itself.")
 
-    additive_mask = np.where(matrix > 0.0, 0.0, -1e9).astype(np.float32)
+    if mode == "none":
+        additive_mask = None
+        mask_format = "none; causal graph loaded for metadata only"
+    elif mode == "hard":
+        additive_mask = np.where(matrix > 0.0, 0.0, -1e9).astype(np.float32)
+        mask_format = "hard additive attention mask, 0.0=allowed, -1e9=blocked"
+    else:
+        if d_model is None or n_heads is None:
+            raise ValueError("d_model and n_heads are required when --causal_mask_mode soft_bias.")
+        if d_model % n_heads != 0:
+            raise ValueError(f"d_model={d_model} must be divisible by n_heads={n_heads}.")
+        head_dim = d_model // n_heads
+        # FullAttention scales scores after applying additive masks, so compensate here
+        # to make beta approximately equal to the final softmax-logit penalty.
+        pre_scale_penalty = float(beta) * math.sqrt(float(head_dim))
+        additive_mask = np.where(matrix > 0.0, 0.0, -pre_scale_penalty).astype(np.float32)
+        mask_format = (
+            f"soft additive attention bias, 0.0=allowed, approximately -{float(beta):g} final-logit "
+            f"non-edge bias before softmax"
+        )
+
     allowed_positions = int(np.sum(matrix > 0.0))
     total_positions = int(matrix.size)
     metadata = {
         "causal_graph_dir": str(graph_dir),
         "causal_adjacency_path": str(adjacency_path),
+        "mask_mode": mode,
+        "mask_beta": float(beta) if mode == "soft_bias" else None,
+        "pre_scale_non_edge_bias": (
+            float(additive_mask[matrix <= 0.0][0])
+            if additive_mask is not None and np.any(matrix <= 0.0)
+            else None
+        ),
+        "mask_applied": mode != "none",
         "feature_order": expected_order,
         "mask_shape": [int(matrix.shape[0]), int(matrix.shape[1])],
         "allowed_attention_positions": allowed_positions,
         "total_attention_positions": total_positions,
         "mask_density": float(allowed_positions / total_positions),
-        "mask_format": "additive attention mask, 0.0=allowed, -1e9=blocked",
+        "mask_format": mask_format,
     }
-    return torch.from_numpy(additive_mask), metadata
+    return torch.from_numpy(additive_mask) if additive_mask is not None else None, metadata
 
 
 def build_itransformer_model(args: argparse.Namespace, scalers: Any) -> ITransformerBaseline:
     feature_cols = list(args.feature_cols)
     target_feature_index = get_target_feature_index(feature_cols, args.target_col)
-    causal_attention_mask, _ = load_causal_attention_mask(getattr(args, "causal_graph_dir", None), feature_cols)
+    causal_attention_mask, _ = load_causal_attention_mask(
+        getattr(args, "causal_graph_dir", None),
+        feature_cols,
+        mode=getattr(args, "causal_mask_mode", "hard"),
+        beta=float(getattr(args, "causal_mask_beta", 1.0)),
+        d_model=int(getattr(args, "d_model", 0)),
+        n_heads=int(getattr(args, "n_heads", 0)),
+    )
 
     return ITransformerBaseline(
         target_feature_index=target_feature_index,
@@ -346,6 +405,10 @@ def build_eval_args_from_checkpoint(cli_args: argparse.Namespace, checkpoint_arg
         eval_args.causal_graph_dir = cli_args.causal_graph_dir
     elif not hasattr(eval_args, "causal_graph_dir"):
         eval_args.causal_graph_dir = None
+    if not hasattr(eval_args, "causal_mask_mode"):
+        eval_args.causal_mask_mode = cli_args.causal_mask_mode
+    if not hasattr(eval_args, "causal_mask_beta"):
+        eval_args.causal_mask_beta = cli_args.causal_mask_beta
     if cli_args.max_eval_batches is not None:
         eval_args.max_eval_batches = cli_args.max_eval_batches
     eval_args.progress_mininterval = cli_args.progress_mininterval
@@ -373,6 +436,10 @@ def evaluate_and_export(
     _, causal_mask_metadata = load_causal_attention_mask(
         getattr(args, "causal_graph_dir", None),
         list(args.feature_cols),
+        mode=getattr(args, "causal_mask_mode", "hard"),
+        beta=float(getattr(args, "causal_mask_beta", 1.0)),
+        d_model=int(getattr(args, "d_model", 0)),
+        n_heads=int(getattr(args, "n_heads", 0)),
     )
     trainable_parameter_count = int(sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
     validation_loader = create_data_loader(datasets["validation"], args.batch_size, False, args.num_workers, device)
@@ -432,7 +499,11 @@ def evaluate_and_export(
         "baseline_type": "itransformer",
         "baseline_definition": (
             "iTransformer backbone with Active_Pow extracted from the multivariate forecast output"
-            + (" and a global PCMCI variable-level attention mask." if causal_mask_metadata else ".")
+            + (
+                f" and a global PCMCI variable-level {causal_mask_metadata['mask_mode']} attention mask."
+                if causal_mask_metadata and causal_mask_metadata.get("mask_applied")
+                else "."
+            )
         ),
         "causal_mask": causal_mask_metadata,
         "best_epoch": best_epoch,
