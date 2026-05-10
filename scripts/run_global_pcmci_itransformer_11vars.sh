@@ -25,6 +25,7 @@ DATA_DIR="${DATA_DIR:-$(project_config_get paths.data_dir)}"
 CAUSAL_GRAPH_DIR="${CAUSAL_GRAPH_DIR:-$(project_config_get paths.results.causal_graphs_global_pcmci_11vars_train)}"
 CAUSAL_TRAIN_PATH="${CAUSAL_TRAIN_PATH:-${DATA_DIR}/splits/train.csv}"
 REBUILD_CAUSAL_GRAPH="${REBUILD_CAUSAL_GRAPH:-0}"
+TRUST_EXISTING_CAUSAL_GRAPH="${TRUST_EXISTING_CAUSAL_GRAPH:-0}"
 CAUSAL_SAMPLE_SCOPE="${CAUSAL_SAMPLE_SCOPE:-full_train}"
 CAUSAL_TAU_MIN="${CAUSAL_TAU_MIN:-1}"
 CAUSAL_TAU_MAX="${CAUSAL_TAU_MAX:-12}"
@@ -126,7 +127,13 @@ print(f"Reusing current causal graph: {adjacency_path}")
 PY
 }
 
-if [[ "${REBUILD_CAUSAL_GRAPH}" == "1" ]] || ! causal_graph_config_is_current "${CAUSAL_GRAPH_PATH}" "${CAUSAL_TRAIN_PATH_ABS}"; then
+if [[ "${TRUST_EXISTING_CAUSAL_GRAPH}" == "1" ]]; then
+  if [[ ! -f "${CAUSAL_GRAPH_PATH}/global_pcmci_config.json" || ! -f "${CAUSAL_GRAPH_PATH}/global_causal_adjacency.csv" ]]; then
+    echo "Error: TRUST_EXISTING_CAUSAL_GRAPH=1 but causal graph files are incomplete under ${CAUSAL_GRAPH_PATH}" >&2
+    exit 1
+  fi
+  echo "Trusting existing causal graph without path/config rebuild check: ${CAUSAL_GRAPH_PATH}"
+elif [[ "${REBUILD_CAUSAL_GRAPH}" == "1" ]] || ! causal_graph_config_is_current "${CAUSAL_GRAPH_PATH}" "${CAUSAL_TRAIN_PATH_ABS}"; then
   "${PYTHON_BIN}" -u "${CAUSAL_SCRIPT}" \
     --train_path "${CAUSAL_TRAIN_PATH}" \
     --sample_scope "${CAUSAL_SAMPLE_SCOPE}" \
@@ -144,19 +151,19 @@ MODE="${MODE:-train}" \
 DATA_DIR="${DATA_DIR}" \
 SEQ_LEN="${SEQ_LEN:-96}" \
 PRED_LENS="${PRED_LENS:-1 12 24 48}" \
-BATCH_SIZE="${BATCH_SIZE:-128}" \
-D_MODEL="${D_MODEL:-192}" \
+BATCH_SIZE="${BATCH_SIZE:-256}" \
+D_MODEL="${D_MODEL:-128}" \
 N_HEADS="${N_HEADS:-4}" \
 E_LAYERS="${E_LAYERS:-2}" \
-D_FF="${D_FF:-384}" \
+D_FF="${D_FF:-256}" \
 FACTOR="${FACTOR:-5}" \
 DROPOUT="${DROPOUT:-0.1}" \
 ACTIVATION="${ACTIVATION:-gelu}" \
-LEARNING_RATE="${LEARNING_RATE:-1e-3}" \
+LEARNING_RATE="${LEARNING_RATE:-5e-4}" \
 WEIGHT_DECAY="${WEIGHT_DECAY:-1e-5}" \
 GRAD_CLIP="${GRAD_CLIP:-1.0}" \
-EPOCHS="${EPOCHS:-120}" \
-PATIENCE="${PATIENCE:-20}" \
+EPOCHS="${EPOCHS:-80}" \
+PATIENCE="${PATIENCE:-15}" \
 MIN_DELTA="${MIN_DELTA:-1e-5}" \
 NUM_WORKERS="${NUM_WORKERS:-$(project_config_get runtime.num_workers)}" \
 SEED="${SEED:-42}" \
