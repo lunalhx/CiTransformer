@@ -44,6 +44,7 @@ PRED_LENS="${PRED_LENS:-$(config_get_default parallel.pred_lens "1 12 24 48")}"
 MAX_PARALLEL="${MAX_PARALLEL:-$(config_get_default parallel.max_parallel "")}"
 LOG_DIR="${LOG_DIR:-$(config_get_default parallel.log_dir "")}"
 COMPUTE_THREADS="${COMPUTE_THREADS:-$(config_get_default parallel.compute_threads "")}"
+CASE_MATRIX="${CASE_MATRIX:-$(config_get_default parallel.case_matrix "")}"
 DEVICE_OVERRIDE="${DEVICE:-}"
 NUM_WORKERS_OVERRIDE="${NUM_WORKERS:-}"
 
@@ -61,6 +62,8 @@ Options:
   --log-dir DIR           Override local.yaml parallel.log_dir
                           Default: logs/parallel_<experiment>
   --compute-threads N     Override local.yaml parallel.compute_threads
+  --case-matrix LIST      Optional cases to run for every pred_len, e.g. "none,soft1,soft2"
+                          Supported cases for mask calibration: none | soft1 | soft2 | hard
   --device DEVICE         Optional override: cpu | cuda | auto
   --num-workers N         Optional override for DataLoader workers
   -h, --help              Show this help
@@ -96,6 +99,10 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --compute-threads)
       COMPUTE_THREADS="$2"
+      shift 2
+      ;;
+    --case-matrix)
+      CASE_MATRIX="$2"
       shift 2
       ;;
     --device)
@@ -180,12 +187,42 @@ fi
 
 run_one_pred_len() {
   local pred_len="$1"
-  local log_path="${LOG_DIR}/pred_len_${pred_len}.log"
+  local case_name="${2:-}"
+  local log_stem="pred_len_${pred_len}"
+  if [[ -n "${case_name}" ]]; then
+    log_stem="${case_name}_${log_stem}"
+  fi
+  local log_path="${LOG_DIR}/${log_stem}.log"
 
   (
     cd "${PROJECT_ROOT}"
 
     export PRED_LENS="${pred_len}"
+    if [[ -n "${case_name}" ]]; then
+      export RUN_NONE="0"
+      export RUN_SOFT_BETA_1="0"
+      export RUN_SOFT_BETA_2="0"
+      export RUN_HARD="0"
+
+      case "${case_name}" in
+        none)
+          export RUN_NONE="1"
+          ;;
+        soft1|soft_beta_1|soft_bias_beta_1)
+          export RUN_SOFT_BETA_1="1"
+          ;;
+        soft2|soft_beta_2|soft_bias_beta_2)
+          export RUN_SOFT_BETA_2="1"
+          ;;
+        hard|hard_matched)
+          export RUN_HARD="1"
+          ;;
+        *)
+          echo "Error: unsupported case in parallel.case_matrix: ${case_name}" >&2
+          exit 1
+          ;;
+      esac
+    fi
 
     if [[ -n "${DEVICE_OVERRIDE}" ]]; then
       export DEVICE="${DEVICE_OVERRIDE}"
@@ -206,6 +243,7 @@ run_one_pred_len() {
     echo "[$(date '+%F %T')] Start ${EXPERIMENT_LABEL}, pred_len=${pred_len}"
     echo "Experiment script: ${EXPERIMENT_SCRIPT}"
     echo "PRED_LENS=${PRED_LENS}"
+    [[ -n "${case_name}" ]] && echo "CASE=${case_name}"
     [[ -n "${DEVICE_OVERRIDE}" ]] && echo "DEVICE=${DEVICE_OVERRIDE}"
     [[ -n "${NUM_WORKERS_OVERRIDE}" ]] && echo "NUM_WORKERS=${NUM_WORKERS_OVERRIDE}"
     [[ -n "${COMPUTE_THREADS}" ]] && echo "COMPUTE_THREADS=${COMPUTE_THREADS}"
@@ -234,6 +272,7 @@ echo "Running pred_len experiments in parallel"
 echo "Experiment   -> ${EXPERIMENT_LABEL}"
 echo "Script       -> ${EXPERIMENT_SCRIPT}"
 echo "Pred lens    -> ${PRED_LEN_ARRAY[*]}"
+[[ -n "${CASE_MATRIX}" ]] && echo "Case matrix  -> ${CASE_MATRIX}"
 echo "Max parallel -> ${MAX_PARALLEL}"
 echo "Log dir      -> ${LOG_DIR}"
 [[ -n "${DEVICE_OVERRIDE}" ]] && echo "Device       -> ${DEVICE_OVERRIDE}"
@@ -243,18 +282,36 @@ echo "======================================================================"
 
 batch_pids=()
 failed=0
+read -r -a CASE_ARRAY <<< "${CASE_MATRIX//,/ }"
 
-for pred_len in "${PRED_LEN_ARRAY[@]}"; do
-  run_one_pred_len "${pred_len}" &
+start_run() {
+  local pred_len="$1"
+  local case_name="${2:-}"
+  local log_stem="pred_len_${pred_len}"
+  if [[ -n "${case_name}" ]]; then
+    log_stem="${case_name}_${log_stem}"
+  fi
+
+  run_one_pred_len "${pred_len}" "${case_name}" &
   pid="$!"
   batch_pids+=("${pid}")
-  echo "Started pred_len=${pred_len}, pid=${pid}, log=${LOG_DIR}/pred_len_${pred_len}.log"
+  echo "Started pred_len=${pred_len}${case_name:+, case=${case_name}}, pid=${pid}, log=${LOG_DIR}/${log_stem}.log"
 
   if [[ "${#batch_pids[@]}" -ge "${MAX_PARALLEL}" ]]; then
     if ! wait_for_batch "${batch_pids[@]}"; then
       failed=1
     fi
     batch_pids=()
+  fi
+}
+
+for pred_len in "${PRED_LEN_ARRAY[@]}"; do
+  if [[ "${#CASE_ARRAY[@]}" -gt 0 ]]; then
+    for case_name in "${CASE_ARRAY[@]}"; do
+      start_run "${pred_len}" "${case_name}"
+    done
+  else
+    start_run "${pred_len}"
   fi
 done
 
