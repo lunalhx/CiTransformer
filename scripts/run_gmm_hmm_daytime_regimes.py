@@ -66,7 +66,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--feature_cols", nargs="+", default=DEFAULT_FEATURE_COLUMNS)
     parser.add_argument("--day_col", default="day_night_label")
-    parser.add_argument("--k_values", nargs="+", type=int, default=[2, 3, 4, 5, 6])
+    parser.add_argument("--k_values", nargs="+", type=int, default=[2, 3, 4, 5, 6, 7, 8, 9, 10])
+    parser.add_argument(
+        "--force_k",
+        type=int,
+        default=None,
+        help="Force the final selected K after scanning. Useful for interpretability comparisons.",
+    )
     parser.add_argument("--n_mix", type=int, default=1, help="Gaussian mixtures per hidden state.")
     parser.add_argument("--min_regime_ratio", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=42)
@@ -216,6 +222,16 @@ def choose_best_k(selection_df: pd.DataFrame) -> pd.Series:
     return candidates.iloc[0]
 
 
+def select_k(selection_df: pd.DataFrame, force_k: int | None) -> pd.Series:
+    if force_k is None:
+        return choose_best_k(selection_df)
+    forced = selection_df[selection_df["n_components"] == force_k]
+    if forced.empty:
+        available = selection_df["n_components"].tolist()
+        raise ValueError(f"--force_k {force_k} was not scanned. Available K values: {available}")
+    return forced.iloc[0]
+
+
 def to_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): to_jsonable(item) for key, item in value.items()}
@@ -305,13 +321,24 @@ def infer_regime_names(summary: pd.DataFrame) -> dict[int, str]:
         "humid_variable_output",
         "clear_midday_output",
         "low_sun_angle_variable",
+        "seasonal_high_output",
+        "seasonal_low_output",
+        "diffuse_low_output",
+        "diffuse_high_output",
+        "warm_midday_output",
+        "cool_midday_output",
+        "early_day_transition",
+        "late_day_transition",
     ]
     used = set()
     for row_index, row in day_summary.iterrows():
         regime = int(row["regime"])
         label = label_by_index.get(row_index)
         if label is None or label in used:
-            label = next(item for item in fallback if item not in used)
+            label = next(
+                (item for item in fallback if item not in used),
+                f"regime_{regime}_unnamed",
+            )
         names[regime] = label
         used.add(label)
     return names
@@ -562,7 +589,7 @@ def main() -> None:
 
     selection_df = pd.DataFrame(selection_records).sort_values("n_components")
     selection_df.to_csv(output_dir / "regime_selection.csv", index=False)
-    selected_row = choose_best_k(selection_df)
+    selected_row = select_k(selection_df, force_k=args.force_k)
     best_k = int(selected_row["n_components"])
     best_model = fitted_models[best_k]
     log(f"Selected K={best_k}")
@@ -589,6 +616,7 @@ def main() -> None:
     config = {
         "implementation": "hmmlearn.hmm.GMMHMM",
         "selected_k": best_k,
+        "forced_k": args.force_k,
         "n_mix": args.n_mix,
         "covariance_type": args.covariance_type,
         "selection_rule": "lowest BIC among K with every daytime state ratio >= min_regime_ratio; falls back to global lowest BIC if none are stable",
