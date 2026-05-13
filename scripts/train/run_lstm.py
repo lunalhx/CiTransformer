@@ -9,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -41,6 +41,8 @@ from utils.datasets import (
     load_split_dataframe,
     resolve_split_dir,
 )
+
+BatchModelKwargsFn = Callable[[dict[str, torch.Tensor], torch.device], dict[str, Any]]
 
 
 @dataclass
@@ -486,6 +488,7 @@ def train_one_epoch(
     log_interval: int,
     progress_mininterval: float,
     max_batches: int | None = None,
+    model_kwargs_fn: BatchModelKwargsFn | None = None,
 ) -> float:
     model.train()
     total_loss = 0.0
@@ -507,7 +510,8 @@ def train_one_epoch(
         x, y = move_batch_to_device(batch, device)
         optimizer.zero_grad(set_to_none=True)
 
-        predictions = model(x)
+        model_kwargs = model_kwargs_fn(batch, device) if model_kwargs_fn is not None else {}
+        predictions = model(x, **model_kwargs)
         loss = criterion(predictions, y)
         loss.backward()
 
@@ -544,6 +548,7 @@ def evaluate_loss(
     epoch: int | None = None,
     progress_mininterval: float = 15.0,
     max_batches: int | None = None,
+    model_kwargs_fn: BatchModelKwargsFn | None = None,
 ) -> float:
     model.eval()
     total_loss = 0.0
@@ -565,7 +570,8 @@ def evaluate_loss(
             break
 
         x, y = move_batch_to_device(batch, device)
-        predictions = model(x)
+        model_kwargs = model_kwargs_fn(batch, device) if model_kwargs_fn is not None else {}
+        predictions = model(x, **model_kwargs)
         loss = criterion(predictions, y)
 
         batch_size = x.size(0)
@@ -585,6 +591,7 @@ def collect_predictions(
     split_name: str = "test",
     progress_mininterval: float = 15.0,
     max_batches: int | None = None,
+    model_kwargs_fn: BatchModelKwargsFn | None = None,
 ) -> dict[str, np.ndarray]:
     model.eval()
 
@@ -594,6 +601,8 @@ def collect_predictions(
     input_end_batches: list[np.ndarray] = []
     target_time_batches: list[np.ndarray] = []
     target_day_batches: list[np.ndarray] = []
+    input_end_regime_batches: list[np.ndarray] = []
+    target_regime_batches: list[np.ndarray] = []
 
     progress = tqdm(
         loader,
@@ -607,7 +616,8 @@ def collect_predictions(
             break
 
         x = batch["x"].to(device=device, dtype=torch.float32)
-        predictions_scaled = model(x).detach().cpu().numpy()
+        model_kwargs = model_kwargs_fn(batch, device) if model_kwargs_fn is not None else {}
+        predictions_scaled = model(x, **model_kwargs).detach().cpu().numpy()
         predictions = target_scaler.inverse_transform(predictions_scaled.reshape(-1, 1)).reshape(predictions_scaled.shape)
 
         pred_batches.append(predictions.astype(np.float32))
@@ -616,8 +626,12 @@ def collect_predictions(
         input_end_batches.append(batch["input_end_ns"].cpu().numpy().astype(np.int64))
         target_time_batches.append(batch["target_time_ns"].cpu().numpy().astype(np.int64))
         target_day_batches.append(batch["target_day_night"].cpu().numpy().astype(np.int64))
+        if "input_end_regime" in batch:
+            input_end_regime_batches.append(batch["input_end_regime"].cpu().numpy().astype(np.int64))
+        if "target_regime" in batch:
+            target_regime_batches.append(batch["target_regime"].cpu().numpy().astype(np.int64))
 
-    return {
+    prediction_dict = {
         "y_pred": np.concatenate(pred_batches, axis=0),
         "y_true": np.concatenate(true_batches, axis=0),
         "input_start_ns": np.concatenate(input_start_batches, axis=0),
@@ -625,6 +639,11 @@ def collect_predictions(
         "target_time_ns": np.concatenate(target_time_batches, axis=0),
         "target_day_night": np.concatenate(target_day_batches, axis=0),
     }
+    if input_end_regime_batches:
+        prediction_dict["input_end_regime"] = np.concatenate(input_end_regime_batches, axis=0)
+    if target_regime_batches:
+        prediction_dict["target_regime"] = np.concatenate(target_regime_batches, axis=0)
+    return prediction_dict
 
 
 def build_prediction_dataframe(
@@ -649,12 +668,16 @@ def build_prediction_dataframe(
         "target_start_time": ns_to_datetime(target_start_ns, target_timezone).astype(str),
         "target_end_time": ns_to_datetime(target_end_ns, target_timezone).astype(str),
     }
+    if "input_end_regime" in prediction_dict:
+        frame_dict["input_end_regime"] = prediction_dict["input_end_regime"].astype(np.int64)
 
     for horizon in range(pred_len):
         horizon_name = horizon + 1
         frame_dict[f"y_true_t+{horizon_name}"] = y_true[:, horizon]
         frame_dict[f"y_pred_t+{horizon_name}"] = y_pred[:, horizon]
         frame_dict[f"day_night_t+{horizon_name}"] = target_day_night[:, horizon]
+        if "target_regime" in prediction_dict:
+            frame_dict[f"target_regime_t+{horizon_name}"] = prediction_dict["target_regime"][:, horizon].astype(np.int64)
 
     return pd.DataFrame(frame_dict)
 

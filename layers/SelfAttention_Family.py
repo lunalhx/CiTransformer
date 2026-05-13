@@ -186,7 +186,12 @@ class FullAttention(nn.Module):
 
         mask = mask.to(dtype=scores.dtype)
         finite_mask = mask[torch.isfinite(mask)]
-        if finite_mask.numel() > 0 and finite_mask.min() >= 0.0 and finite_mask.max() <= 1.0:
+        if (
+            finite_mask.numel() > 0
+            and finite_mask.min() >= 0.0
+            and finite_mask.max() <= 1.0
+            and finite_mask.max() > 0.0
+        ):
             return scores.masked_fill(mask <= 0.0, -np.inf)
         return scores + mask
 

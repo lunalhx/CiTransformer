@@ -179,6 +179,7 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
         feature_scaler: StandardScaler,
         target_scaler: StandardScaler,
         expected_delta: pd.Timedelta | None = None,
+        regime_col: str = "regime",
     ) -> None:
         if seq_len <= 0:
             raise ValueError("seq_len must be positive.")
@@ -197,6 +198,8 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
         self.target_scaler = target_scaler
         self.expected_delta = expected_delta or infer_expected_timedelta(self.df.index)
         self.timezone = self.df.index.tz
+        self.regime_col = regime_col
+        self.has_regime_col = regime_col in self.df.columns
 
         feature_array = self.df[feature_cols].to_numpy(dtype=np.float32)
         raw_target_array = self.df[target_col].to_numpy(dtype=np.float32)
@@ -210,6 +213,11 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
             self.df["day_night_label"].to_numpy(dtype=np.int64)
             if "day_night_label" in self.df.columns
             else np.ones(len(self.df), dtype=np.int64)
+        )
+        self.regime = (
+            pd.to_numeric(self.df[regime_col], errors="coerce").fillna(0).to_numpy(dtype=np.int64)
+            if self.has_regime_col
+            else np.zeros(len(self.df), dtype=np.int64)
         )
         self.timestamp_ns = self.df.index.asi8.astype(np.int64)
 
@@ -248,8 +256,9 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
         targets_raw = self.targets_raw[encoder_end:decoder_end]
         target_time_ns = self.timestamp_ns[encoder_end:decoder_end]
         target_day_night = self.day_night_label[encoder_end:decoder_end]
+        target_regime = self.regime[encoder_end:decoder_end]
 
-        return {
+        sample = {
             "x": torch.from_numpy(features),
             "y": torch.from_numpy(targets),
             "y_raw": torch.from_numpy(targets_raw),
@@ -258,6 +267,10 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
             "target_time_ns": torch.from_numpy(target_time_ns),
             "target_day_night": torch.from_numpy(target_day_night),
         }
+        if self.has_regime_col:
+            sample["input_end_regime"] = torch.tensor(self.regime[encoder_end - 1], dtype=torch.long)
+            sample["target_regime"] = torch.from_numpy(target_regime)
+        return sample
 
     def summary(self) -> dict[str, int | float | str]:
         total_segments = int(len(self.segment_starts))
@@ -280,5 +293,12 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
         if usable_segments > 0:
             summary["max_usable_segment_length"] = int(self.valid_segment_lengths.max())
             summary["min_usable_segment_length"] = int(self.valid_segment_lengths.min())
+
+        if self.has_regime_col:
+            unique, counts = np.unique(self.regime, return_counts=True)
+            summary["regime_col"] = self.regime_col
+            summary["row_regime_counts"] = {
+                str(int(regime)): int(count) for regime, count in zip(unique, counts, strict=True)
+            }
 
         return summary

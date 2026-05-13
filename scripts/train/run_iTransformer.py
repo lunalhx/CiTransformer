@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from scripts.train.run_lstm import (
     build_prediction_dataframe,
     collect_predictions,
     create_data_loader,
+    compute_regression_metrics,
     evaluate_loss,
     evaluate_prediction_arrays,
     format_metric_for_console,
@@ -41,7 +43,15 @@ from scripts.train.run_lstm import (
     set_random_seed,
     train_one_epoch,
 )
-from utils.datasets import DEFAULT_DATA_DIR, DEFAULT_FEATURE_COLUMNS, DEFAULT_TARGET_COLUMN
+from utils.datasets import (
+    DEFAULT_DATA_DIR,
+    DEFAULT_FEATURE_COLUMNS,
+    DEFAULT_TARGET_COLUMN,
+    ContinuousSegmentTimeSeriesDataset,
+    fit_split_scalers,
+    infer_expected_timedelta,
+    load_split_dataframe,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,6 +129,37 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Finite negative bias magnitude used only when --causal_mask_mode soft_bias.",
+    )
+    parser.add_argument(
+        "--regime_graph_root",
+        type=str,
+        default=None,
+        help=(
+            "Optional root directory containing regime_*/global_causal_adjacency.csv. "
+            "When provided, a per-sample regime-specific soft attention bias is selected dynamically."
+        ),
+    )
+    parser.add_argument(
+        "--regime_label_dir",
+        type=str,
+        default=None,
+        help=(
+            "Optional directory containing train/validation/calibration/test_with_regime.csv. "
+            "Required for regime-aware dynamic masking unless --data_dir already points to labeled split files."
+        ),
+    )
+    parser.add_argument(
+        "--regime_col",
+        type=str,
+        default="regime",
+        help="Column containing integer regime labels for dynamic causal mask selection.",
+    )
+    parser.add_argument(
+        "--regime_mask_selection",
+        type=str,
+        default="input_end",
+        choices=["input_end"],
+        help="Which observed regime selects the dynamic mask. Only input_end is leakage-safe for the main experiment.",
     )
 
     parser.add_argument("--epochs", type=int, default=30, help="Maximum training epochs.")
@@ -388,6 +429,226 @@ def resolve_path(path_value: str) -> Path:
     return resolve_project_path(path_value, PROJECT_ROOT)
 
 
+def resolve_regime_split_path(regime_label_dir: str, split_name: str) -> Path:
+    label_dir = resolve_path(regime_label_dir)
+    candidates = [
+        label_dir / f"{split_name}_with_regime.csv",
+        label_dir / "splits" / f"{split_name}_with_regime.csv",
+        label_dir / f"{split_name}.csv",
+        label_dir / "splits" / f"{split_name}.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        f"Cannot find a regime-labeled {split_name} split under {label_dir}. "
+        "Expected split_with_regime.csv or split.csv, either directly or under splits/."
+    )
+
+
+def prepare_itransformer_datasets(
+    args: argparse.Namespace,
+    include_test: bool = True,
+) -> tuple[dict[str, ContinuousSegmentTimeSeriesDataset], dict[str, pd.DataFrame], Any, pd.Timedelta]:
+    if getattr(args, "regime_label_dir", None) is None and getattr(args, "regime_graph_root", None) is None:
+        return prepare_datasets(args, include_test=include_test)
+
+    label_source = args.regime_label_dir or args.data_dir
+    split_names = ["train", "validation", "calibration"]
+    if include_test:
+        split_names.append("test")
+
+    raw_frames = {
+        split_name: load_split_dataframe(
+            resolve_regime_split_path(label_source, split_name),
+            time_col=args.time_col,
+        )
+        for split_name in split_names
+    }
+
+    if getattr(args, "regime_graph_root", None) is not None:
+        missing_regime = [
+            split_name
+            for split_name, frame in raw_frames.items()
+            if args.regime_col not in frame.columns
+        ]
+        if missing_regime:
+            raise KeyError(
+                f"Dynamic regime masking requires `{args.regime_col}` in every loaded split. "
+                f"Missing in: {missing_regime}. Use --regime_label_dir with *_with_regime.csv files."
+            )
+
+    feature_cols = list(args.feature_cols)
+    scalers = fit_split_scalers(raw_frames["train"], feature_cols, args.target_col)
+    expected_delta = (
+        pd.Timedelta(minutes=args.sampling_freq_minutes)
+        if args.sampling_freq_minutes is not None
+        else infer_expected_timedelta(raw_frames["train"].index)
+    )
+
+    datasets: dict[str, ContinuousSegmentTimeSeriesDataset] = {}
+    for split_name, frame in raw_frames.items():
+        datasets[split_name] = ContinuousSegmentTimeSeriesDataset(
+            df=frame,
+            feature_cols=feature_cols,
+            target_col=args.target_col,
+            seq_len=args.seq_len,
+            pred_len=args.pred_len,
+            feature_scaler=scalers.feature_scaler,
+            target_scaler=scalers.target_scaler,
+            expected_delta=expected_delta,
+            regime_col=args.regime_col,
+        )
+    return datasets, raw_frames, scalers, expected_delta
+
+
+def load_regime_attention_mask_bank(
+    regime_graph_root: str | None,
+    feature_cols: list[str],
+    mode: str,
+    beta: float,
+    d_model: int,
+    n_heads: int,
+    regime_mask_selection: str,
+) -> tuple[torch.Tensor | None, dict[str, Any] | None]:
+    if regime_graph_root is None:
+        return None, None
+    if regime_mask_selection != "input_end":
+        raise ValueError("Only --regime_mask_selection input_end is supported for leakage-safe dynamic masking.")
+    if mode != "soft_bias":
+        raise ValueError("Regime-aware dynamic masking requires --causal_mask_mode soft_bias.")
+    if not math.isclose(float(beta), 1.0, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("Regime-aware dynamic masking is fixed to --causal_mask_beta 1.0.")
+
+    graph_root = resolve_path(regime_graph_root)
+    if not graph_root.exists():
+        raise FileNotFoundError(f"Cannot find regime graph root: {graph_root}")
+
+    regime_pattern = re.compile(r"^regime_(\d+)$")
+    regime_dirs: dict[int, Path] = {}
+    for child in graph_root.iterdir():
+        if not child.is_dir():
+            continue
+        match = regime_pattern.match(child.name)
+        if match is None:
+            continue
+        adjacency_path = child / "global_causal_adjacency.csv"
+        if adjacency_path.exists():
+            regime_dirs[int(match.group(1))] = child
+
+    if not regime_dirs:
+        raise FileNotFoundError(
+            f"Cannot find any regime_*/global_causal_adjacency.csv files under {graph_root}."
+        )
+
+    feature_count = len(feature_cols)
+    max_regime = max(regime_dirs)
+    mask_bank = np.zeros((max_regime + 1, feature_count, feature_count), dtype=np.float32)
+    regime_metadata: dict[str, Any] = {}
+    for regime_id in sorted(regime_dirs):
+        mask, metadata = load_causal_attention_mask(
+            str(regime_dirs[regime_id]),
+            feature_cols,
+            mode=mode,
+            beta=beta,
+            d_model=d_model,
+            n_heads=n_heads,
+        )
+        if mask is None:
+            raise RuntimeError(f"Regime {regime_id} did not produce an additive attention mask.")
+        mask_bank[regime_id] = mask.numpy().astype(np.float32)
+        regime_metadata[str(regime_id)] = metadata
+
+    metadata = {
+        "mask_type": "regime_dynamic_soft_bias",
+        "mask_applied": True,
+        "mask_mode": mode,
+        "mask_beta": float(beta),
+        "regime_graph_root": str(graph_root),
+        "regime_mask_selection": regime_mask_selection,
+        "selection_detail": "input_end_regime at encoder_end - 1; no target timestamp regime is used for gating",
+        "fallback_regime": 0,
+        "fallback_mask": "all-zero additive attention bias, equivalent to no structural causal constraint",
+        "loaded_regimes": [int(regime_id) for regime_id in sorted(regime_dirs)],
+        "mask_bank_shape": [int(value) for value in mask_bank.shape],
+        "feature_order": list(feature_cols),
+        "regime_metadata": regime_metadata,
+        "graph_semantics": (
+            "Target-regime-conditioned PCMCI graphs are used as leakage-safe dynamic soft attention bias "
+            "selected by the last observed input regime."
+        ),
+    }
+    return torch.from_numpy(mask_bank), metadata
+
+
+def build_regime_model_kwargs_fn(
+    regime_mask_bank: torch.Tensor | None,
+) -> Any:
+    if regime_mask_bank is None:
+        return None
+
+    def model_kwargs_fn(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
+        if "input_end_regime" not in batch:
+            raise KeyError(
+                "Dynamic regime masking requires `input_end_regime` in each batch. "
+                "Load *_with_regime.csv files via --regime_label_dir."
+            )
+        regime_ids = batch["input_end_regime"].to(device=device, dtype=torch.long)
+        bank = regime_mask_bank.to(device=device)
+        valid_regime = (regime_ids >= 0) & (regime_ids < bank.size(0))
+        safe_regime_ids = torch.where(valid_regime, regime_ids, torch.zeros_like(regime_ids))
+        # Shape [B, 1, N, N] broadcasts over attention heads [B, H, N, N].
+        return {"mask": bank[safe_regime_ids].unsqueeze(1)}
+
+    return model_kwargs_fn
+
+
+def value_counts_dict(values: np.ndarray) -> dict[str, int]:
+    if values.size == 0:
+        return {}
+    unique, counts = np.unique(values.astype(np.int64), return_counts=True)
+    return {str(int(value)): int(count) for value, count in zip(unique, counts, strict=True)}
+
+
+def compute_target_regime_metrics(prediction_dict: dict[str, np.ndarray]) -> dict[str, Any] | None:
+    if "target_regime" not in prediction_dict:
+        return None
+    flat_true = prediction_dict["y_true"].reshape(-1)
+    flat_pred = prediction_dict["y_pred"].reshape(-1)
+    flat_regime = prediction_dict["target_regime"].reshape(-1).astype(np.int64)
+
+    metrics: dict[str, Any] = {}
+    for regime_id in sorted(np.unique(flat_regime).tolist()):
+        regime_mask = flat_regime == int(regime_id)
+        metrics[str(int(regime_id))] = compute_regression_metrics(
+            flat_true[regime_mask],
+            flat_pred[regime_mask],
+        )
+    return metrics
+
+
+def summarize_regime_mask_usage(
+    prediction_dict: dict[str, np.ndarray],
+    regime_mask_metadata: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if regime_mask_metadata is None or "input_end_regime" not in prediction_dict:
+        return None
+
+    input_end_regime = prediction_dict["input_end_regime"].astype(np.int64)
+    loaded_regimes = {int(value) for value in regime_mask_metadata.get("loaded_regimes", [])}
+    fallback_mask = np.array([int(value) not in loaded_regimes for value in input_end_regime], dtype=bool)
+    usage = {
+        "sample_count": int(input_end_regime.size),
+        "input_end_regime_counts": value_counts_dict(input_end_regime),
+        "fallback_count": int(fallback_mask.sum()),
+        "fallback_ratio": float(fallback_mask.mean()) if input_end_regime.size else 0.0,
+        "fallback_definition": "regime not in loaded_regimes, including regime 0 night, maps to no-mask bias",
+    }
+    if "target_regime" in prediction_dict:
+        usage["target_regime_counts"] = value_counts_dict(prediction_dict["target_regime"].reshape(-1))
+    return usage
+
+
 def build_eval_args_from_checkpoint(cli_args: argparse.Namespace, checkpoint_args: dict[str, Any]) -> argparse.Namespace:
     eval_args = argparse.Namespace(**checkpoint_args)
 
@@ -405,6 +666,18 @@ def build_eval_args_from_checkpoint(cli_args: argparse.Namespace, checkpoint_arg
         eval_args.causal_graph_dir = cli_args.causal_graph_dir
     elif not hasattr(eval_args, "causal_graph_dir"):
         eval_args.causal_graph_dir = None
+    if cli_args.regime_graph_root is not None:
+        eval_args.regime_graph_root = cli_args.regime_graph_root
+    elif not hasattr(eval_args, "regime_graph_root"):
+        eval_args.regime_graph_root = None
+    if cli_args.regime_label_dir is not None:
+        eval_args.regime_label_dir = cli_args.regime_label_dir
+    elif not hasattr(eval_args, "regime_label_dir"):
+        eval_args.regime_label_dir = None
+    if not hasattr(eval_args, "regime_col"):
+        eval_args.regime_col = cli_args.regime_col
+    if not hasattr(eval_args, "regime_mask_selection"):
+        eval_args.regime_mask_selection = cli_args.regime_mask_selection
     if not hasattr(eval_args, "causal_mask_mode"):
         eval_args.causal_mask_mode = cli_args.causal_mask_mode
     if not hasattr(eval_args, "causal_mask_beta"):
@@ -431,16 +704,21 @@ def evaluate_and_export(
     best_epoch: int,
     best_val_loss: float | None,
     history: list[dict[str, float | int]],
+    model_kwargs_fn: Any = None,
+    regime_mask_metadata: dict[str, Any] | None = None,
 ) -> None:
     target_feature_index = get_target_feature_index(list(args.feature_cols), args.target_col)
-    _, causal_mask_metadata = load_causal_attention_mask(
-        getattr(args, "causal_graph_dir", None),
-        list(args.feature_cols),
-        mode=getattr(args, "causal_mask_mode", "hard"),
-        beta=float(getattr(args, "causal_mask_beta", 1.0)),
-        d_model=int(getattr(args, "d_model", 0)),
-        n_heads=int(getattr(args, "n_heads", 0)),
-    )
+    if regime_mask_metadata is None:
+        _, causal_mask_metadata = load_causal_attention_mask(
+            getattr(args, "causal_graph_dir", None),
+            list(args.feature_cols),
+            mode=getattr(args, "causal_mask_mode", "hard"),
+            beta=float(getattr(args, "causal_mask_beta", 1.0)),
+            d_model=int(getattr(args, "d_model", 0)),
+            n_heads=int(getattr(args, "n_heads", 0)),
+        )
+    else:
+        causal_mask_metadata = None
     trainable_parameter_count = int(sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad))
     validation_loader = create_data_loader(datasets["validation"], args.batch_size, False, args.num_workers, device)
 
@@ -452,6 +730,7 @@ def evaluate_and_export(
         split_name="validation",
         progress_mininterval=args.progress_mininterval,
         max_batches=args.max_eval_batches,
+        model_kwargs_fn=model_kwargs_fn,
     )
     validation_metrics = evaluate_prediction_arrays(
         y_true=validation_prediction_dict["y_true"],
@@ -475,6 +754,7 @@ def evaluate_and_export(
             split_name="test",
             progress_mininterval=args.progress_mininterval,
             max_batches=args.max_eval_batches,
+            model_kwargs_fn=model_kwargs_fn,
         )
         test_metrics = evaluate_prediction_arrays(
             y_true=reported_prediction_dict["y_true"],
@@ -490,6 +770,12 @@ def evaluate_and_export(
         prediction_dict=reported_prediction_dict,
         target_timezone=datasets[reported_split_name].timezone,
     )
+    validation_target_regime_metrics = compute_target_regime_metrics(validation_prediction_dict)
+    reported_target_regime_metrics = compute_target_regime_metrics(reported_prediction_dict)
+    regime_mask_usage = {
+        "validation": summarize_regime_mask_usage(validation_prediction_dict, regime_mask_metadata),
+        reported_split_name: summarize_regime_mask_usage(reported_prediction_dict, regime_mask_metadata),
+    } if regime_mask_metadata is not None else None
 
     metrics_payload = {
         "config": vars(args),
@@ -500,12 +786,23 @@ def evaluate_and_export(
         "baseline_definition": (
             "iTransformer backbone with Active_Pow extracted from the multivariate forecast output"
             + (
-                f" and a global PCMCI variable-level {causal_mask_metadata['mask_mode']} attention mask."
-                if causal_mask_metadata and causal_mask_metadata.get("mask_applied")
-                else "."
+                " and target-regime-conditioned PCMCI soft attention bias selected by input_end_regime."
+                if regime_mask_metadata is not None
+                else (
+                    f" and a global PCMCI variable-level {causal_mask_metadata['mask_mode']} attention mask."
+                    if causal_mask_metadata and causal_mask_metadata.get("mask_applied")
+                    else "."
+                )
             )
         ),
         "causal_mask": causal_mask_metadata,
+        "regime_causal_mask": regime_mask_metadata,
+        "regime_mask_selection": (
+            getattr(args, "regime_mask_selection", None)
+            if regime_mask_metadata is not None
+            else None
+        ),
+        "regime_mask_usage": regime_mask_usage,
         "best_epoch": best_epoch,
         "best_validation_loss": best_val_loss,
         "expected_delta_minutes": float(expected_delta / pd.Timedelta(minutes=1)),
@@ -516,7 +813,9 @@ def evaluate_and_export(
         "report_split": args.report_split,
         "calibration_usage": "loaded_but_unused",
         "validation_metrics": validation_metrics,
+        "validation_target_regime_metrics": validation_target_regime_metrics,
         "reported_metrics": reported_metrics,
+        "reported_target_regime_metrics": reported_target_regime_metrics,
         "test_metrics": test_metrics,
         "history": history,
         "checkpoint_path": str(checkpoint_path),
@@ -539,6 +838,9 @@ def evaluate_and_export(
     log(f"- checkpoint: {checkpoint_path}")
     if causal_mask_metadata is not None:
         log(f"- causal mask: {causal_mask_metadata['causal_adjacency_path']}")
+    if regime_mask_metadata is not None:
+        log(f"- regime mask root: {regime_mask_metadata['regime_graph_root']}")
+        log(f"- regime mask selection: {regime_mask_metadata['regime_mask_selection']}")
 
     all_metrics = reported_metrics["all_timestamps"]
     daytime_metrics = reported_metrics["daytime_only"]
@@ -573,6 +875,8 @@ def main() -> None:
         raise ValueError("--tuning_only requires --report_split validation.")
     if args.tuning_only and args.eval_checkpoint_path is not None:
         raise ValueError("--tuning_only cannot be combined with --eval_checkpoint_path.")
+    if args.regime_graph_root is not None and args.causal_graph_dir is not None:
+        raise ValueError("--regime_graph_root and --causal_graph_dir are mutually exclusive.")
 
     if args.eval_checkpoint_path is not None:
         checkpoint_path = resolve_path(args.eval_checkpoint_path)
@@ -586,9 +890,23 @@ def main() -> None:
         device = get_device(args.device)
         results_dir = resolve_path(args.results_dir)
         results_dir.mkdir(parents=True, exist_ok=True)
+        if args.regime_graph_root is not None and args.causal_graph_dir is not None:
+            raise ValueError("--regime_graph_root and --causal_graph_dir are mutually exclusive.")
+        regime_mask_bank, regime_mask_metadata = load_regime_attention_mask_bank(
+            getattr(args, "regime_graph_root", None),
+            list(args.feature_cols),
+            mode=getattr(args, "causal_mask_mode", "hard"),
+            beta=float(getattr(args, "causal_mask_beta", 1.0)),
+            d_model=int(getattr(args, "d_model", 0)),
+            n_heads=int(getattr(args, "n_heads", 0)),
+            regime_mask_selection=getattr(args, "regime_mask_selection", "input_end"),
+        )
+        if regime_mask_bank is not None:
+            regime_mask_bank = regime_mask_bank.to(device=device)
+        model_kwargs_fn = build_regime_model_kwargs_fn(regime_mask_bank)
 
         include_test = args.report_split == "test"
-        datasets, raw_frames, scalers, expected_delta = prepare_datasets(args, include_test=include_test)
+        datasets, raw_frames, scalers, expected_delta = prepare_itransformer_datasets(args, include_test=include_test)
         print_dataset_summaries(datasets)
 
         if len(datasets["validation"]) == 0:
@@ -617,6 +935,8 @@ def main() -> None:
             best_epoch=int(checkpoint.get("epoch", 0)),
             best_val_loss=float(checkpoint.get("best_val_loss")) if checkpoint.get("best_val_loss") is not None else None,
             history=[],
+            model_kwargs_fn=model_kwargs_fn,
+            regime_mask_metadata=regime_mask_metadata,
         )
         return
 
@@ -627,8 +947,20 @@ def main() -> None:
     checkpoint_path = resolve_path(args.checkpoint_path)
     results_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    regime_mask_bank, regime_mask_metadata = load_regime_attention_mask_bank(
+        getattr(args, "regime_graph_root", None),
+        list(args.feature_cols),
+        mode=getattr(args, "causal_mask_mode", "hard"),
+        beta=float(getattr(args, "causal_mask_beta", 1.0)),
+        d_model=int(getattr(args, "d_model", 0)),
+        n_heads=int(getattr(args, "n_heads", 0)),
+        regime_mask_selection=getattr(args, "regime_mask_selection", "input_end"),
+    )
+    if regime_mask_bank is not None:
+        regime_mask_bank = regime_mask_bank.to(device=device)
+    model_kwargs_fn = build_regime_model_kwargs_fn(regime_mask_bank)
 
-    datasets, raw_frames, scalers, expected_delta = prepare_datasets(args, include_test=not args.tuning_only)
+    datasets, raw_frames, scalers, expected_delta = prepare_itransformer_datasets(args, include_test=not args.tuning_only)
     print_dataset_summaries(datasets)
 
     if len(datasets["train"]) == 0:
@@ -670,6 +1002,7 @@ def main() -> None:
             log_interval=args.log_interval,
             progress_mininterval=args.progress_mininterval,
             max_batches=args.max_train_batches,
+            model_kwargs_fn=model_kwargs_fn,
         )
         val_loss = evaluate_loss(
             model=model,
@@ -680,6 +1013,7 @@ def main() -> None:
             epoch=epoch,
             progress_mininterval=args.progress_mininterval,
             max_batches=args.max_eval_batches,
+            model_kwargs_fn=model_kwargs_fn,
         )
 
         history.append(
@@ -730,6 +1064,8 @@ def main() -> None:
         best_epoch=best_epoch,
         best_val_loss=best_val_loss,
         history=history,
+        model_kwargs_fn=model_kwargs_fn,
+        regime_mask_metadata=regime_mask_metadata,
     )
 
 

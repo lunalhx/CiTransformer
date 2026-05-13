@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import pickle
 import sys
 from pathlib import Path
 from typing import Any
@@ -349,6 +350,32 @@ def write_labeled_csvs(labeled: dict[str, pd.DataFrame], output_dir: Path) -> No
         df.reset_index().to_csv(output_dir / f"{split}_with_regime.csv", index=False)
 
 
+def save_model_artifact(
+    output_dir: Path,
+    model: GMMHMM,
+    scaler: StandardScaler,
+    args: argparse.Namespace,
+    selected_row: pd.Series,
+    regime_names: dict[int, str],
+) -> Path:
+    artifact_path = output_dir / "gmm_hmm_regime_model.pkl"
+    artifact = {
+        "implementation": "hmmlearn.hmm.GMMHMM",
+        "model": model,
+        "scaler": scaler,
+        "feature_columns": list(args.feature_cols),
+        "day_column": args.day_col,
+        "night_regime": 0,
+        "daytime_regime_offset": 1,
+        "selected_model": to_jsonable(selected_row.to_dict()),
+        "regime_names": {str(key): value for key, value in regime_names.items()},
+        "seed": int(args.seed),
+    }
+    with artifact_path.open("wb") as fp:
+        pickle.dump(artifact, fp)
+    return artifact_path
+
+
 def plot_daily_profiles(labeled: dict[str, pd.DataFrame], output_dir: Path) -> None:
     combined = pd.concat(labeled.values()).copy()
     combined = combined[combined["regime"] > 0]
@@ -599,6 +626,14 @@ def main() -> None:
     regime_names = infer_regime_names(summary)
     summary["regime_name"] = summary["regime"].map(regime_names)
     summary.to_csv(output_dir / "regime_summary.csv", index=False)
+    model_artifact_path = save_model_artifact(
+        output_dir=output_dir,
+        model=best_model,
+        scaler=scaler,
+        args=args,
+        selected_row=selected_row,
+        regime_names=regime_names,
+    )
 
     transition_df = pd.DataFrame(
         best_model.transmat_,
@@ -637,6 +672,11 @@ def main() -> None:
         },
         "selected_model": to_jsonable(selected_row.to_dict()),
         "regime_names": {str(key): value for key, value in regime_names.items()},
+        "model_artifact_path": str(model_artifact_path),
+        "labeled_split_files": {
+            split: str(output_dir / f"{split}_with_regime.csv")
+            for split in SPLITS
+        },
     }
     with (output_dir / "best_regime_config.json").open("w", encoding="utf-8") as fp:
         json.dump(config, fp, ensure_ascii=False, indent=2)

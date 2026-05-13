@@ -21,6 +21,7 @@ Tasks:
   mask-calibration             Run causal mask calibration cases
   regime-discovery             Run daytime regime discovery
   regime-pcmci                 Run target-regime-conditioned PCMCI
+  regime-itransformer          Run input-end-regime dynamic-mask iTransformer
   parallel-pred-lens           Run configured pred_len jobs in parallel
 
 Examples:
@@ -82,6 +83,9 @@ case "${TASK}" in
     ;;
   regime-pcmci)
     exec "${PYTHON_BIN}" -u "${PROJECT_ROOT}/scripts/causal/run_regime_target_pcmci.py" "$@"
+    ;;
+  regime-itransformer)
+    exec bash "${PROJECT_ROOT}/scripts/experiments/run_itransformer_regime_dynamic_mask.sh" "$@"
     ;;
   parallel-pred-lens)
     exec bash "${PROJECT_ROOT}/scripts/experiments/run_parallel_pred_lens.sh" "$@"

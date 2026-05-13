@@ -62,6 +62,10 @@ DISABLE_NORM="${DISABLE_NORM:-0}"
 OUTPUT_ATTENTION="${OUTPUT_ATTENTION:-0}"
 CAUSAL_MASK_MODE="${CAUSAL_MASK_MODE:-hard}"
 CAUSAL_MASK_BETA="${CAUSAL_MASK_BETA:-1.0}"
+REGIME_GRAPH_ROOT="${REGIME_GRAPH_ROOT:-}"
+REGIME_LABEL_DIR="${REGIME_LABEL_DIR:-}"
+REGIME_COL="${REGIME_COL:-regime}"
+REGIME_MASK_SELECTION="${REGIME_MASK_SELECTION:-input_end}"
 
 if [[ "${MODE}" != "train" && "${MODE}" != "export_tuned_best" ]]; then
   echo "Error: MODE must be one of: train, export_tuned_best" >&2
@@ -206,6 +210,14 @@ run_train_case() {
 
   cmd+=(--causal_mask_mode "${CAUSAL_MASK_MODE}")
   cmd+=(--causal_mask_beta "${CAUSAL_MASK_BETA}")
+  if [[ -n "${REGIME_GRAPH_ROOT}" ]]; then
+    cmd+=(--regime_graph_root "${REGIME_GRAPH_ROOT}")
+    cmd+=(--regime_col "${REGIME_COL}")
+    cmd+=(--regime_mask_selection "${REGIME_MASK_SELECTION}")
+  fi
+  if [[ -n "${REGIME_LABEL_DIR}" ]]; then
+    cmd+=(--regime_label_dir "${REGIME_LABEL_DIR}")
+  fi
 
   if [[ "$#" -gt 1 ]]; then
     cmd+=("${@:2}")
@@ -248,6 +260,14 @@ run_export_case() {
     --progress_mininterval "${PROGRESS_MININTERVAL}"
     --experiment_name "tuned_sharedbest_pred_len_${pred_len}"
   )
+  if [[ -n "${REGIME_GRAPH_ROOT}" ]]; then
+    cmd+=(--regime_graph_root "${REGIME_GRAPH_ROOT}")
+    cmd+=(--regime_col "${REGIME_COL}")
+    cmd+=(--regime_mask_selection "${REGIME_MASK_SELECTION}")
+  fi
+  if [[ -n "${REGIME_LABEL_DIR}" ]]; then
+    cmd+=(--regime_label_dir "${REGIME_LABEL_DIR}")
+  fi
 
   if [[ -n "${TIME_COL}" ]]; then
     cmd+=(--time_col "${TIME_COL}")
