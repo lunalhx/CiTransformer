@@ -2,15 +2,15 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/restore_predictions_csv.sh <archive.tar.gz>
+  bash scripts/ops/restore_predictions_csv.sh <archive.tar.gz>
 
 Restores archived results CSV files back into their original results/... paths.
-The archive must have been created by scripts/archive_predictions_csv.sh.
+The archive must have been created by scripts/ops/archive_predictions_csv.sh.
 EOF
 }
 

@@ -13,7 +13,7 @@ import pandas as pd
 import torch
 from torch import nn
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -25,7 +25,7 @@ os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_CONFIG.get_path("paths.matplot
 import matplotlib.pyplot as plt
 
 from models.baseline import ITransformerBaseline
-from scripts.run_lstm import (
+from scripts.train.run_lstm import (
     EarlyStopping,
     build_prediction_dataframe,
     collect_predictions,

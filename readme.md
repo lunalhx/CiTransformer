@@ -108,7 +108,7 @@ cp configs/local.example.yaml configs/local.yaml
 CITRANSFORMER_DATA_DIR=/mnt/data/pv \
 CITRANSFORMER_RESULTS_ROOT=/mnt/experiments/results \
 CITRANSFORMER_DEVICE=cuda \
-bash scripts/run_lstm_experiments.sh
+bash scripts/run_experiment.sh lstm
 ```
 
 优先级为：CLI 参数 > 环境变量 > `configs/local.yaml` > `configs/default.yaml` > 代码保底默认值。所有相对路径都会按项目根目录解析。

@@ -2,10 +2,10 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${PROJECT_ROOT}/scripts/project_config.sh"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${PROJECT_ROOT}/scripts/lib/project_config.sh"
 
-RUN_SCRIPT="${PROJECT_ROOT}/scripts/run_itransformer_experiments.sh"
+RUN_SCRIPT="${PROJECT_ROOT}/scripts/experiments/run_itransformer_experiments.sh"
 
 if [[ ! -f "${RUN_SCRIPT}" ]]; then
   echo "Error: cannot find ${RUN_SCRIPT}" >&2
@@ -38,7 +38,7 @@ cd "${PROJECT_ROOT}"
 CAUSAL_GRAPH_PATH="$(project_path "${CAUSAL_GRAPH_DIR}")"
 if [[ ! -f "${CAUSAL_GRAPH_PATH}/global_causal_adjacency.csv" ]]; then
   echo "Error: cannot find current global PCMCI adjacency under ${CAUSAL_GRAPH_PATH}" >&2
-  echo "Run scripts/run_global_pcmci_itransformer_11vars.sh once, or set CAUSAL_GRAPH_DIR." >&2
+  echo "Run bash scripts/run_experiment.sh global-pcmci-mask once, or set CAUSAL_GRAPH_DIR." >&2
   exit 1
 fi
 

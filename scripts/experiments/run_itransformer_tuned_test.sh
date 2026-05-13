@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${PROJECT_ROOT}/scripts/project_config.sh"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${PROJECT_ROOT}/scripts/lib/project_config.sh"
 cd "${PROJECT_ROOT}"
 
 PYTHON_BIN="$(resolve_python_bin)" || {
@@ -34,4 +34,4 @@ echo "Results dir   -> $(project_path "${RESULTS_BASE_DIR}")"
 echo "Tuning summary-> $(project_path "${TUNING_SUMMARY_ROOT}")"
 echo "======================================================================"
 
-bash "${PROJECT_ROOT}/scripts/run_itransformer_experiments.sh"
+bash "${PROJECT_ROOT}/scripts/experiments/run_itransformer_experiments.sh"

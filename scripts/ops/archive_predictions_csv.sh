@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ARCHIVE_ROOT="${ARCHIVE_ROOT:-${PROJECT_ROOT}/archives}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 ARCHIVE_PATH="${ARCHIVE_PATH:-${ARCHIVE_ROOT}/results_csv_${TIMESTAMP}.tar.gz}"
@@ -12,7 +12,7 @@ DELETE_AFTER_ARCHIVE="${DELETE_AFTER_ARCHIVE:-1}"
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/archive_predictions_csv.sh [options]
+  bash scripts/ops/archive_predictions_csv.sh [options]
 
 Options:
   --archive PATH            Output .tar.gz path.

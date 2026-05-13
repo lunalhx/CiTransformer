@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${PROJECT_ROOT}/scripts/project_config.sh"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${PROJECT_ROOT}/scripts/lib/project_config.sh"
 cd "${PROJECT_ROOT}"
 
 PYTHON_BIN="$(resolve_python_bin)" || {
@@ -45,4 +45,4 @@ export PROGRESS_MININTERVAL
 export SEED
 export NUM_WORKERS
 
-bash "${PROJECT_ROOT}/scripts/tune_itransformer.sh"
+bash "${PROJECT_ROOT}/scripts/experiments/tune_itransformer.sh"

@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${PROJECT_ROOT}/scripts/project_config.sh"
-RUN_SCRIPT="${PROJECT_ROOT}/scripts/run_itransformer_experiments.sh"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${PROJECT_ROOT}/scripts/lib/project_config.sh"
+RUN_SCRIPT="${PROJECT_ROOT}/scripts/experiments/run_itransformer_experiments.sh"
 CAUSAL_SCRIPT="${PROJECT_ROOT}/causal_algo/run_global_pcmci.py"
 
 if [[ ! -f "${RUN_SCRIPT}" ]]; then

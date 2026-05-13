@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${PROJECT_ROOT}/scripts/project_config.sh"
-RUN_SCRIPT="${PROJECT_ROOT}/scripts/run_iTransformer.py"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${PROJECT_ROOT}/scripts/lib/project_config.sh"
+RUN_SCRIPT="${PROJECT_ROOT}/scripts/train/run_iTransformer.py"
 
 if [[ ! -f "${RUN_SCRIPT}" ]]; then
   echo "Error: cannot find ${RUN_SCRIPT}" >&2

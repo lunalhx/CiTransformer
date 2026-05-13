@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "${PROJECT_ROOT}/scripts/project_config.sh"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${PROJECT_ROOT}/scripts/lib/project_config.sh"
 
 PYTHON_BIN="$(resolve_python_bin)" || {
   echo "Error: no usable Python interpreter found. Set PYTHON_BIN manually." >&2
@@ -51,7 +51,7 @@ NUM_WORKERS_OVERRIDE="${NUM_WORKERS:-}"
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/run_parallel_pred_lens.sh [options]
+  bash scripts/run_experiment.sh parallel-pred-lens [options]
 
 Options:
   --experiment NAME       Override local.yaml parallel.experiment_script
@@ -69,9 +69,9 @@ Options:
   -h, --help              Show this help
 
 Examples:
-  bash scripts/run_parallel_pred_lens.sh
-  bash scripts/run_parallel_pred_lens.sh --experiment scripts/run_lstm_experiments.sh --pred-lens "1,12,24,48"
-  bash scripts/run_parallel_pred_lens.sh --experiment persistence --pred-lens "1 12"
+  bash scripts/run_experiment.sh parallel-pred-lens
+  bash scripts/run_experiment.sh parallel-pred-lens --experiment scripts/experiments/run_lstm_experiments.sh --pred-lens "1,12,24,48"
+  bash scripts/run_experiment.sh parallel-pred-lens --experiment persistence --pred-lens "1 12"
 
 Notes:
   - By default, experiment_script/pred_lens/device/num_workers/python_bin come from configs/local.yaml.
@@ -127,19 +127,19 @@ done
 
 case "${EXPERIMENT}" in
   itransformer)
-    EXPERIMENT_SCRIPT="${PROJECT_ROOT}/scripts/run_itransformer_experiments.sh"
+    EXPERIMENT_SCRIPT="${PROJECT_ROOT}/scripts/experiments/run_itransformer_experiments.sh"
     EXPERIMENT_LABEL="itransformer"
     ;;
   lstm)
-    EXPERIMENT_SCRIPT="${PROJECT_ROOT}/scripts/run_lstm_experiments.sh"
+    EXPERIMENT_SCRIPT="${PROJECT_ROOT}/scripts/experiments/run_lstm_experiments.sh"
     EXPERIMENT_LABEL="lstm"
     ;;
   persistence)
-    EXPERIMENT_SCRIPT="${PROJECT_ROOT}/scripts/run_persistence_experiments.sh"
+    EXPERIMENT_SCRIPT="${PROJECT_ROOT}/scripts/experiments/run_persistence_experiments.sh"
     EXPERIMENT_LABEL="persistence"
     ;;
   global_pcmci|global_pcmci_itransformer)
-    EXPERIMENT_SCRIPT="${PROJECT_ROOT}/scripts/run_global_pcmci_itransformer_11vars.sh"
+    EXPERIMENT_SCRIPT="${PROJECT_ROOT}/scripts/experiments/run_global_pcmci_itransformer_11vars.sh"
     EXPERIMENT_LABEL="global_pcmci_itransformer"
     ;;
   *)
