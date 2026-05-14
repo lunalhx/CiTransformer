@@ -24,16 +24,13 @@ configs/local.yaml
 # Large or machine-local project data
 # ============================
 data/
+result/
+results/
+checkpoint/
 checkpoints/
 docs/
 logs/
 archives/
-
-# Keep only lightweight result summaries in git.
-results/**
-!results/**/
-!results/**/*.json
-!results/**/*.md
 
 # ============================
 # Experiment artifacts
