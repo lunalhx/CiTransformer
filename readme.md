@@ -111,6 +111,8 @@ CITRANSFORMER_DEVICE=cuda \
 bash scripts/run_experiment.sh lstm
 ```
 
+仓库只提交代码、共享配置、依赖清单和少量 `results/**/*.json` / `results/**/*.md` 实验摘要。数据集、模型权重、预测明细、图片和个人文档默认不提交；在服务器上运行时，把 `data`、`results`、`checkpoints` 放到挂载盘，并通过 `configs/local.yaml` 或上面的环境变量指向实际路径即可。
+
 优先级为：CLI 参数 > 环境变量 > `configs/local.yaml` > `configs/default.yaml` > 代码保底默认值。所有相对路径都会按项目根目录解析。
 
 ---
@@ -120,13 +122,13 @@ bash scripts/run_experiment.sh lstm
 ```
 CiTransformer/
 ├── configs/              # 共享默认配置和本机配置模板
-├── data/
+├── data/                  # 本地/挂载数据目录，不提交 git
 │   ├── raw/               # 原始 CSV 数据（如 electricity.csv）
 │   └── processed/         # 处理后的平稳数据 + 邻接矩阵
 │
-├── checkpoints/           # 训练好的模型权重（.pth 文件）
+├── checkpoints/           # 本地/挂载模型权重目录，不提交 git
 │
-├── results/
+├── results/               # 只提交 json/md 摘要，其余完整结果不提交
 │   ├── causal_graphs/     # PCMCI 生成的四季因果图 + Mask 矩阵
 │   └── prediction_plots/  # 预测结果对比图
 │

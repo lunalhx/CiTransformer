@@ -1,5 +1,5 @@
 # ============================
-# Python 虚拟环境
+# Python / local runtime
 # ============================
 .venv/
 .venv_*
@@ -10,31 +10,61 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
 
 # ============================
-# 数据文件（体积大，不上传）
+# Local machine config
+# ============================
+configs/local.yaml
+
+# ============================
+# Large or machine-local project data
+# ============================
+data/
+checkpoints/
+docs/
+logs/
+archives/
+
+# Keep only lightweight result summaries in git.
+results/**
+!results/**/
+!results/**/*.json
+!results/**/*.md
+
+# ============================
+# Experiment artifacts
 # ============================
 *.csv
-data/**/*.csv
-# ============================
-# 模型权重文件（体积大）
-# ============================
+*.tsv
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.pth
+*.pt
+*.ckpt
+*.pkl
+*.joblib
+*.png
+*.jpg
+*.jpeg
+*.pdf
 
-
 # ============================
-# 实验结果图（可选择性上传）
-# ============================
-
-
-# ============================
-# IDE 配置
+# IDE config
 # ============================
 .idea/
 .vscode/
 *.iml
 
 # ============================
-# Mac 系统文件
+# OS files
 # ============================
 .DS_Store
 .AppleDouble
@@ -47,17 +77,6 @@ data/**/*.csv
 *.ipynb
 
 # ============================
-# 日志文件
+# Logs
 # ============================
 *.log
-logs/
-
-# ============================
-# 本地归档（实验 CSV/权重等大文件备份）
-# ============================
-archives/
-
-# ============================
-# 本机配置
-# ============================
-configs/local.yaml
