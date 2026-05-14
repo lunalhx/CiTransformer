@@ -62,6 +62,9 @@ DISABLE_NORM="${DISABLE_NORM:-0}"
 OUTPUT_ATTENTION="${OUTPUT_ATTENTION:-0}"
 CAUSAL_MASK_MODE="${CAUSAL_MASK_MODE:-hard}"
 CAUSAL_MASK_BETA="${CAUSAL_MASK_BETA:-1.0}"
+CAUSAL_GAMMA="${CAUSAL_GAMMA:-1.0}"
+CAUSAL_REWARD_STRENGTH="${CAUSAL_REWARD_STRENGTH:-max_abs_mci}"
+CAUSAL_STRENGTH_NORMALIZATION="${CAUSAL_STRENGTH_NORMALIZATION:-per_target_max}"
 REGIME_GRAPH_ROOT="${REGIME_GRAPH_ROOT:-}"
 REGIME_LABEL_DIR="${REGIME_LABEL_DIR:-}"
 REGIME_COL="${REGIME_COL:-regime}"
@@ -210,6 +213,9 @@ run_train_case() {
 
   cmd+=(--causal_mask_mode "${CAUSAL_MASK_MODE}")
   cmd+=(--causal_mask_beta "${CAUSAL_MASK_BETA}")
+  cmd+=(--causal_gamma "${CAUSAL_GAMMA}")
+  cmd+=(--causal_reward_strength "${CAUSAL_REWARD_STRENGTH}")
+  cmd+=(--causal_strength_normalization "${CAUSAL_STRENGTH_NORMALIZATION}")
   if [[ -n "${REGIME_GRAPH_ROOT}" ]]; then
     cmd+=(--regime_graph_root "${REGIME_GRAPH_ROOT}")
     cmd+=(--regime_col "${REGIME_COL}")
@@ -257,6 +263,9 @@ run_export_case() {
     --num_workers "${NUM_WORKERS}"
     --causal_mask_mode "${CAUSAL_MASK_MODE}"
     --causal_mask_beta "${CAUSAL_MASK_BETA}"
+    --causal_gamma "${CAUSAL_GAMMA}"
+    --causal_reward_strength "${CAUSAL_REWARD_STRENGTH}"
+    --causal_strength_normalization "${CAUSAL_STRENGTH_NORMALIZATION}"
     --progress_mininterval "${PROGRESS_MININTERVAL}"
     --experiment_name "tuned_sharedbest_pred_len_${pred_len}"
   )

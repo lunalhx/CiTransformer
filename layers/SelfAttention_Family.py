@@ -184,16 +184,7 @@ class FullAttention(nn.Module):
         if mask.dtype == torch.bool:
             return scores.masked_fill(mask, -np.inf)
 
-        mask = mask.to(dtype=scores.dtype)
-        finite_mask = mask[torch.isfinite(mask)]
-        if (
-            finite_mask.numel() > 0
-            and finite_mask.min() >= 0.0
-            and finite_mask.max() <= 1.0
-            and finite_mask.max() > 0.0
-        ):
-            return scores.masked_fill(mask <= 0.0, -np.inf)
-        return scores + mask
+        return scores + mask.to(dtype=scores.dtype)
 
     def forward(self, queries, keys, values, attn_mask, tau=None, delta=None):
         B, L, H, E = queries.shape

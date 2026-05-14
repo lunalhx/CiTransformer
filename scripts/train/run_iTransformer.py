@@ -118,10 +118,11 @@ def parse_args() -> argparse.Namespace:
         "--causal_mask_mode",
         type=str,
         default="hard",
-        choices=["none", "hard", "soft_bias"],
+        choices=["none", "hard", "soft_bias", "causal_reward"],
         help=(
             "How to inject the causal graph into attention. 'hard' blocks non-edges, 'soft_bias' adds a finite "
-            "negative bias to non-edges, and 'none' disables causal attention masking."
+            "negative bias to non-edges, 'causal_reward' adds a finite positive bias to retained causal edges, "
+            "and 'none' disables causal attention masking."
         ),
     )
     parser.add_argument(
@@ -129,6 +130,26 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Finite negative bias magnitude used only when --causal_mask_mode soft_bias.",
+    )
+    parser.add_argument(
+        "--causal_gamma",
+        type=float,
+        default=1.0,
+        help="Positive causal edge reward magnitude used only when --causal_mask_mode causal_reward.",
+    )
+    parser.add_argument(
+        "--causal_reward_strength",
+        type=str,
+        default="max_abs_mci",
+        choices=["max_abs_mci"],
+        help="Edge strength column used by --causal_mask_mode causal_reward.",
+    )
+    parser.add_argument(
+        "--causal_strength_normalization",
+        type=str,
+        default="per_target_max",
+        choices=["per_target_max"],
+        help="Strength normalization used by --causal_mask_mode causal_reward.",
     )
     parser.add_argument(
         "--regime_graph_root",
@@ -280,17 +301,37 @@ def load_causal_attention_mask(
     feature_cols: list[str],
     mode: str = "hard",
     beta: float = 1.0,
+    gamma: float = 1.0,
+    reward_strength: str = "max_abs_mci",
+    strength_normalization: str = "per_target_max",
     d_model: int | None = None,
     n_heads: int | None = None,
 ) -> tuple[torch.Tensor | None, dict[str, Any] | None]:
-    if mode not in {"none", "hard", "soft_bias"}:
+    if mode not in {"none", "hard", "soft_bias", "causal_reward"}:
         raise ValueError(f"Unsupported causal_mask_mode: {mode}")
     if mode == "soft_bias" and beta <= 0.0:
         raise ValueError("--causal_mask_beta must be positive when --causal_mask_mode soft_bias.")
+    if mode == "causal_reward" and gamma < 0.0:
+        raise ValueError("--causal_gamma must be non-negative when --causal_mask_mode causal_reward.")
+    if mode == "causal_reward" and reward_strength != "max_abs_mci":
+        raise ValueError("Only --causal_reward_strength max_abs_mci is supported for causal_reward.")
+    if mode == "causal_reward" and strength_normalization != "per_target_max":
+        raise ValueError("Only --causal_strength_normalization per_target_max is supported for causal_reward.")
     if causal_graph_dir is None:
         return None, None
 
     graph_dir = resolve_path(causal_graph_dir)
+    if mode == "causal_reward":
+        return load_causal_reward_attention_mask(
+            graph_dir=graph_dir,
+            feature_cols=feature_cols,
+            gamma=gamma,
+            reward_strength=reward_strength,
+            strength_normalization=strength_normalization,
+            d_model=d_model,
+            n_heads=n_heads,
+        )
+
     adjacency_path = graph_dir / "global_causal_adjacency.csv"
     if not adjacency_path.exists():
         raise FileNotFoundError(f"Cannot find causal adjacency file: {adjacency_path}")
@@ -364,6 +405,98 @@ def load_causal_attention_mask(
     return torch.from_numpy(additive_mask) if additive_mask is not None else None, metadata
 
 
+def load_causal_reward_attention_mask(
+    graph_dir: Path,
+    feature_cols: list[str],
+    gamma: float,
+    reward_strength: str,
+    strength_normalization: str,
+    d_model: int | None,
+    n_heads: int | None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    if d_model is None or n_heads is None:
+        raise ValueError("d_model and n_heads are required when --causal_mask_mode causal_reward.")
+    if d_model % n_heads != 0:
+        raise ValueError(f"d_model={d_model} must be divisible by n_heads={n_heads}.")
+
+    edges_path = graph_dir / "topk_final_edges.csv"
+    if not edges_path.exists():
+        raise FileNotFoundError(f"Cannot find causal reward edge file: {edges_path}")
+
+    edges = pd.read_csv(edges_path)
+    required_columns = {"source", "target", reward_strength}
+    missing_columns = sorted(required_columns - set(edges.columns))
+    if missing_columns:
+        raise ValueError(f"{edges_path} is missing required columns: {missing_columns}")
+
+    feature_to_index = {name: index for index, name in enumerate(feature_cols)}
+    feature_count = len(feature_cols)
+    raw_strength = np.zeros((feature_count, feature_count), dtype=np.float32)
+    invalid_edges: list[dict[str, Any]] = []
+
+    for row in edges.loc[:, ["source", "target", reward_strength]].itertuples(index=False):
+        source = str(row.source)
+        target = str(row.target)
+        if source not in feature_to_index or target not in feature_to_index:
+            invalid_edges.append({"source": source, "target": target})
+            continue
+        strength = float(getattr(row, reward_strength))
+        if not math.isfinite(strength):
+            raise ValueError(f"{edges_path} contains non-finite {reward_strength} for {source}->{target}.")
+        if strength < 0.0:
+            raise ValueError(f"{edges_path} contains negative {reward_strength} for {source}->{target}.")
+        target_index = feature_to_index[target]
+        source_index = feature_to_index[source]
+        raw_strength[target_index, source_index] = max(raw_strength[target_index, source_index], strength)
+
+    if invalid_edges:
+        raise ValueError(
+            f"{edges_path} contains edges outside --feature_cols. First invalid edges: {invalid_edges[:5]}"
+        )
+
+    normalized_strength = np.zeros_like(raw_strength, dtype=np.float32)
+    row_maxima = raw_strength.max(axis=1)
+    non_empty_rows = row_maxima > 0.0
+    normalized_strength[non_empty_rows] = (
+        raw_strength[non_empty_rows] / row_maxima[non_empty_rows, None]
+    )
+
+    head_dim = int(d_model) // int(n_heads)
+    pre_scale_multiplier = float(gamma) * math.sqrt(float(head_dim))
+    additive_mask = (pre_scale_multiplier * normalized_strength).astype(np.float32)
+    final_reward = (float(gamma) * normalized_strength).astype(np.float32)
+    positive_reward = final_reward[final_reward > 0.0]
+
+    reward_edge_count = int(np.count_nonzero(normalized_strength > 0.0))
+    total_positions = int(normalized_strength.size)
+    metadata = {
+        "causal_graph_dir": str(graph_dir),
+        "causal_edges_path": str(edges_path),
+        "mask_mode": "causal_reward",
+        "mask_beta": None,
+        "causal_gamma": float(gamma),
+        "causal_reward_strength": reward_strength,
+        "causal_strength_normalization": strength_normalization,
+        "reward_edge_count": reward_edge_count,
+        "reward_min": float(positive_reward.min()) if positive_reward.size else 0.0,
+        "reward_max": float(final_reward.max()) if final_reward.size else 0.0,
+        "pre_scale_reward_max": float(additive_mask.max()) if additive_mask.size else 0.0,
+        "mask_applied": True,
+        "feature_order": list(feature_cols),
+        "mask_shape": [int(feature_count), int(feature_count)],
+        "allowed_attention_positions": reward_edge_count,
+        "total_attention_positions": total_positions,
+        "mask_density": float(reward_edge_count / total_positions) if total_positions else 0.0,
+        "reward_matrix_density": float(reward_edge_count / total_positions) if total_positions else 0.0,
+        "normalization_non_empty_target_count": int(np.count_nonzero(non_empty_rows)),
+        "mask_format": (
+            "causal edge reward additive attention bias; non-edges are 0.0 and retained edges receive "
+            f"approximately +{float(gamma):g} max final-logit reward per target before softmax"
+        ),
+    }
+    return torch.from_numpy(additive_mask), metadata
+
+
 def build_itransformer_model(args: argparse.Namespace, scalers: Any) -> ITransformerBaseline:
     feature_cols = list(args.feature_cols)
     target_feature_index = get_target_feature_index(feature_cols, args.target_col)
@@ -372,6 +505,9 @@ def build_itransformer_model(args: argparse.Namespace, scalers: Any) -> ITransfo
         feature_cols,
         mode=getattr(args, "causal_mask_mode", "hard"),
         beta=float(getattr(args, "causal_mask_beta", 1.0)),
+        gamma=float(getattr(args, "causal_gamma", 1.0)),
+        reward_strength=str(getattr(args, "causal_reward_strength", "max_abs_mci")),
+        strength_normalization=str(getattr(args, "causal_strength_normalization", "per_target_max")),
         d_model=int(getattr(args, "d_model", 0)),
         n_heads=int(getattr(args, "n_heads", 0)),
     )
@@ -507,6 +643,9 @@ def load_regime_attention_mask_bank(
     feature_cols: list[str],
     mode: str,
     beta: float,
+    gamma: float,
+    reward_strength: str,
+    strength_normalization: str,
     d_model: int,
     n_heads: int,
     regime_mask_selection: str,
@@ -515,9 +654,9 @@ def load_regime_attention_mask_bank(
         return None, None
     if regime_mask_selection != "input_end":
         raise ValueError("Only --regime_mask_selection input_end is supported for leakage-safe dynamic masking.")
-    if mode != "soft_bias":
-        raise ValueError("Regime-aware dynamic masking requires --causal_mask_mode soft_bias.")
-    if not math.isclose(float(beta), 1.0, rel_tol=0.0, abs_tol=1e-12):
+    if mode not in {"soft_bias", "causal_reward"}:
+        raise ValueError("Regime-aware dynamic masking requires --causal_mask_mode soft_bias or causal_reward.")
+    if mode == "soft_bias" and not math.isclose(float(beta), 1.0, rel_tol=0.0, abs_tol=1e-12):
         raise ValueError("Regime-aware dynamic masking is fixed to --causal_mask_beta 1.0.")
 
     graph_root = resolve_path(regime_graph_root)
@@ -532,13 +671,14 @@ def load_regime_attention_mask_bank(
         match = regime_pattern.match(child.name)
         if match is None:
             continue
-        adjacency_path = child / "global_causal_adjacency.csv"
-        if adjacency_path.exists():
+        required_path = child / ("topk_final_edges.csv" if mode == "causal_reward" else "global_causal_adjacency.csv")
+        if required_path.exists():
             regime_dirs[int(match.group(1))] = child
 
     if not regime_dirs:
+        expected_name = "topk_final_edges.csv" if mode == "causal_reward" else "global_causal_adjacency.csv"
         raise FileNotFoundError(
-            f"Cannot find any regime_*/global_causal_adjacency.csv files under {graph_root}."
+            f"Cannot find any regime_*/{expected_name} files under {graph_root}."
         )
 
     feature_count = len(feature_cols)
@@ -546,11 +686,16 @@ def load_regime_attention_mask_bank(
     mask_bank = np.zeros((max_regime + 1, feature_count, feature_count), dtype=np.float32)
     regime_metadata: dict[str, Any] = {}
     for regime_id in sorted(regime_dirs):
+        if mode == "causal_reward" and regime_id == 0:
+            continue
         mask, metadata = load_causal_attention_mask(
             str(regime_dirs[regime_id]),
             feature_cols,
             mode=mode,
             beta=beta,
+            gamma=gamma,
+            reward_strength=reward_strength,
+            strength_normalization=strength_normalization,
             d_model=d_model,
             n_heads=n_heads,
         )
@@ -559,23 +704,43 @@ def load_regime_attention_mask_bank(
         mask_bank[regime_id] = mask.numpy().astype(np.float32)
         regime_metadata[str(regime_id)] = metadata
 
+    loaded_regimes = [int(regime_id) for regime_id in sorted(regime_dirs) if not (mode == "causal_reward" and regime_id == 0)]
+    if not loaded_regimes:
+        raise FileNotFoundError(f"Cannot find any nonzero regime reward graphs under {graph_root}.")
+
     metadata = {
-        "mask_type": "regime_dynamic_soft_bias",
+        "mask_type": "regime_dynamic_causal_reward" if mode == "causal_reward" else "regime_dynamic_soft_bias",
         "mask_applied": True,
         "mask_mode": mode,
-        "mask_beta": float(beta),
+        "mask_beta": float(beta) if mode == "soft_bias" else None,
+        "causal_gamma": float(gamma) if mode == "causal_reward" else None,
+        "causal_reward_strength": reward_strength if mode == "causal_reward" else None,
+        "causal_strength_normalization": strength_normalization if mode == "causal_reward" else None,
         "regime_graph_root": str(graph_root),
         "regime_mask_selection": regime_mask_selection,
         "selection_detail": "input_end_regime at encoder_end - 1; no target timestamp regime is used for gating",
         "fallback_regime": 0,
         "fallback_mask": "all-zero additive attention bias, equivalent to no structural causal constraint",
-        "loaded_regimes": [int(regime_id) for regime_id in sorted(regime_dirs)],
+        "loaded_regimes": loaded_regimes,
         "mask_bank_shape": [int(value) for value in mask_bank.shape],
         "feature_order": list(feature_cols),
         "regime_metadata": regime_metadata,
+        "regime_reward_density": (
+            {
+                regime_id: float(regime_meta.get("reward_matrix_density", 0.0))
+                for regime_id, regime_meta in regime_metadata.items()
+            }
+            if mode == "causal_reward"
+            else None
+        ),
         "graph_semantics": (
-            "Target-regime-conditioned PCMCI graphs are used as leakage-safe dynamic soft attention bias "
+            "Target-regime-conditioned PCMCI graphs are used as leakage-safe dynamic causal reward bias "
             "selected by the last observed input regime."
+            if mode == "causal_reward"
+            else (
+                "Target-regime-conditioned PCMCI graphs are used as leakage-safe dynamic soft attention bias "
+                "selected by the last observed input regime."
+            )
         ),
     }
     return torch.from_numpy(mask_bank), metadata
@@ -682,6 +847,12 @@ def build_eval_args_from_checkpoint(cli_args: argparse.Namespace, checkpoint_arg
         eval_args.causal_mask_mode = cli_args.causal_mask_mode
     if not hasattr(eval_args, "causal_mask_beta"):
         eval_args.causal_mask_beta = cli_args.causal_mask_beta
+    if not hasattr(eval_args, "causal_gamma"):
+        eval_args.causal_gamma = cli_args.causal_gamma
+    if not hasattr(eval_args, "causal_reward_strength"):
+        eval_args.causal_reward_strength = cli_args.causal_reward_strength
+    if not hasattr(eval_args, "causal_strength_normalization"):
+        eval_args.causal_strength_normalization = cli_args.causal_strength_normalization
     if cli_args.max_eval_batches is not None:
         eval_args.max_eval_batches = cli_args.max_eval_batches
     eval_args.progress_mininterval = cli_args.progress_mininterval
@@ -714,6 +885,9 @@ def evaluate_and_export(
             list(args.feature_cols),
             mode=getattr(args, "causal_mask_mode", "hard"),
             beta=float(getattr(args, "causal_mask_beta", 1.0)),
+            gamma=float(getattr(args, "causal_gamma", 1.0)),
+            reward_strength=str(getattr(args, "causal_reward_strength", "max_abs_mci")),
+            strength_normalization=str(getattr(args, "causal_strength_normalization", "per_target_max")),
             d_model=int(getattr(args, "d_model", 0)),
             n_heads=int(getattr(args, "n_heads", 0)),
         )
@@ -776,6 +950,39 @@ def evaluate_and_export(
         "validation": summarize_regime_mask_usage(validation_prediction_dict, regime_mask_metadata),
         reported_split_name: summarize_regime_mask_usage(reported_prediction_dict, regime_mask_metadata),
     } if regime_mask_metadata is not None else None
+    reward_stats: dict[str, Any] | None = None
+    if causal_mask_metadata and causal_mask_metadata.get("mask_mode") == "causal_reward":
+        reward_stats = {
+            "reward_edge_count": int(causal_mask_metadata.get("reward_edge_count", 0)),
+            "reward_min": float(causal_mask_metadata.get("reward_min", 0.0)),
+            "reward_max": float(causal_mask_metadata.get("reward_max", 0.0)),
+            "pre_scale_reward_max": float(causal_mask_metadata.get("pre_scale_reward_max", 0.0)),
+        }
+    elif regime_mask_metadata and regime_mask_metadata.get("mask_mode") == "causal_reward":
+        regime_reward_metadata = [
+            metadata
+            for metadata in (regime_mask_metadata.get("regime_metadata") or {}).values()
+            if metadata.get("mask_mode") == "causal_reward"
+        ]
+        reward_mins = [
+            float(metadata.get("reward_min", 0.0))
+            for metadata in regime_reward_metadata
+            if int(metadata.get("reward_edge_count", 0)) > 0
+        ]
+        reward_stats = {
+            "reward_edge_count": int(
+                sum(int(metadata.get("reward_edge_count", 0)) for metadata in regime_reward_metadata)
+            ),
+            "reward_min": min(reward_mins) if reward_mins else 0.0,
+            "reward_max": max(
+                [float(metadata.get("reward_max", 0.0)) for metadata in regime_reward_metadata],
+                default=0.0,
+            ),
+            "pre_scale_reward_max": max(
+                [float(metadata.get("pre_scale_reward_max", 0.0)) for metadata in regime_reward_metadata],
+                default=0.0,
+            ),
+        }
 
     metrics_payload = {
         "config": vars(args),
@@ -786,7 +993,11 @@ def evaluate_and_export(
         "baseline_definition": (
             "iTransformer backbone with Active_Pow extracted from the multivariate forecast output"
             + (
-                " and target-regime-conditioned PCMCI soft attention bias selected by input_end_regime."
+                (
+                    " and target-regime-conditioned PCMCI causal edge reward selected by input_end_regime."
+                    if regime_mask_metadata.get("mask_mode") == "causal_reward"
+                    else " and target-regime-conditioned PCMCI soft attention bias selected by input_end_regime."
+                )
                 if regime_mask_metadata is not None
                 else (
                     f" and a global PCMCI variable-level {causal_mask_metadata['mask_mode']} attention mask."
@@ -794,6 +1005,44 @@ def evaluate_and_export(
                     else "."
                 )
             )
+        ),
+        "causal_mask_mode": getattr(args, "causal_mask_mode", "hard"),
+        "causal_gamma": (
+            float(getattr(args, "causal_gamma", 1.0))
+            if getattr(args, "causal_mask_mode", "hard") == "causal_reward"
+            else None
+        ),
+        "causal_reward_strength": (
+            str(getattr(args, "causal_reward_strength", "max_abs_mci"))
+            if getattr(args, "causal_mask_mode", "hard") == "causal_reward"
+            else None
+        ),
+        "causal_strength_normalization": (
+            str(getattr(args, "causal_strength_normalization", "per_target_max"))
+            if getattr(args, "causal_mask_mode", "hard") == "causal_reward"
+            else None
+        ),
+        "reward_edge_count": (
+            int(reward_stats["reward_edge_count"]) if reward_stats is not None else None
+        ),
+        "reward_min": (
+            float(reward_stats["reward_min"]) if reward_stats is not None else None
+        ),
+        "reward_max": (
+            float(reward_stats["reward_max"]) if reward_stats is not None else None
+        ),
+        "pre_scale_reward_max": (
+            float(reward_stats["pre_scale_reward_max"]) if reward_stats is not None else None
+        ),
+        "loaded_regimes": (
+            regime_mask_metadata.get("loaded_regimes")
+            if regime_mask_metadata is not None
+            else None
+        ),
+        "regime_reward_density": (
+            regime_mask_metadata.get("regime_reward_density")
+            if regime_mask_metadata is not None and regime_mask_metadata.get("mask_mode") == "causal_reward"
+            else None
         ),
         "causal_mask": causal_mask_metadata,
         "regime_causal_mask": regime_mask_metadata,
@@ -897,6 +1146,9 @@ def main() -> None:
             list(args.feature_cols),
             mode=getattr(args, "causal_mask_mode", "hard"),
             beta=float(getattr(args, "causal_mask_beta", 1.0)),
+            gamma=float(getattr(args, "causal_gamma", 1.0)),
+            reward_strength=str(getattr(args, "causal_reward_strength", "max_abs_mci")),
+            strength_normalization=str(getattr(args, "causal_strength_normalization", "per_target_max")),
             d_model=int(getattr(args, "d_model", 0)),
             n_heads=int(getattr(args, "n_heads", 0)),
             regime_mask_selection=getattr(args, "regime_mask_selection", "input_end"),
@@ -952,6 +1204,9 @@ def main() -> None:
         list(args.feature_cols),
         mode=getattr(args, "causal_mask_mode", "hard"),
         beta=float(getattr(args, "causal_mask_beta", 1.0)),
+        gamma=float(getattr(args, "causal_gamma", 1.0)),
+        reward_strength=str(getattr(args, "causal_reward_strength", "max_abs_mci")),
+        strength_normalization=str(getattr(args, "causal_strength_normalization", "per_target_max")),
         d_model=int(getattr(args, "d_model", 0)),
         n_heads=int(getattr(args, "n_heads", 0)),
         regime_mask_selection=getattr(args, "regime_mask_selection", "input_end"),
