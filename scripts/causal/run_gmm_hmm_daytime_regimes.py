@@ -42,12 +42,16 @@ DEFAULT_FEATURE_COLUMNS = [
     "sin_day_of_year",
     "cos_day_of_year",
 ]
-SPLITS = ("train", "validation", "calibration", "test")
+SPLITS = ("train",)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run daytime-only GMM-HMM regime discovery for PV operation states."
+        description=(
+            "Run train-only daytime GMM-HMM regime discovery for PV operation states. "
+            "Only train_with_regime.csv is written; validation/calibration/test regimes are inferred online "
+            "inside downstream forecasting code."
+        )
     )
     parser.add_argument(
         "--data_dir",
@@ -558,7 +562,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     split_dir = resolve_split_dir(args.data_dir)
-    log(f"Loading splits from {split_dir}")
+    log(f"Loading train split from {split_dir}")
     dfs = {split: load_split_dataframe(split_dir / f"{split}.csv", time_col=args.time_col) for split in SPLITS}
     validate_columns(dfs, args.feature_cols, args.day_col)
 
@@ -621,7 +625,7 @@ def main() -> None:
     best_model = fitted_models[best_k]
     log(f"Selected K={best_k}")
 
-    labeled = assign_regimes(dfs, scaler, best_model, args.feature_cols, args.day_col, expected_delta)
+    labeled = assign_regimes({"train": dfs["train"]}, scaler, best_model, args.feature_cols, args.day_col, expected_delta)
     summary = regime_summary(labeled, args.feature_cols, args.day_col)
     regime_names = infer_regime_names(summary)
     summary["regime_name"] = summary["regime"].map(regime_names)
@@ -655,6 +659,10 @@ def main() -> None:
         "n_mix": args.n_mix,
         "covariance_type": args.covariance_type,
         "selection_rule": "lowest BIC among K with every daytime state ratio >= min_regime_ratio; falls back to global lowest BIC if none are stable",
+        "sample_policy": (
+            "train-only regime discovery; validation/calibration/test full-split offline labels are not written "
+            "because downstream forecasting uses online HMM forward filtering"
+        ),
         "min_regime_ratio": args.min_regime_ratio,
         "feature_columns": args.feature_cols,
         "day_column": args.day_col,
@@ -673,10 +681,7 @@ def main() -> None:
         "selected_model": to_jsonable(selected_row.to_dict()),
         "regime_names": {str(key): value for key, value in regime_names.items()},
         "model_artifact_path": str(model_artifact_path),
-        "labeled_split_files": {
-            split: str(output_dir / f"{split}_with_regime.csv")
-            for split in SPLITS
-        },
+        "labeled_split_files": {"train": str(output_dir / "train_with_regime.csv")},
     }
     with (output_dir / "best_regime_config.json").open("w", encoding="utf-8") as fp:
         json.dump(config, fp, ensure_ascii=False, indent=2)

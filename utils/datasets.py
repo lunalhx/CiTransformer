@@ -180,6 +180,10 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
         target_scaler: StandardScaler,
         expected_delta: pd.Timedelta | None = None,
         regime_col: str = "regime",
+        include_regime_labels: bool = True,
+        regime_posterior: np.ndarray | None = None,
+        regime_transition_matrix: np.ndarray | None = None,
+        regime_start_probability: np.ndarray | None = None,
     ) -> None:
         if seq_len <= 0:
             raise ValueError("seq_len must be positive.")
@@ -199,7 +203,7 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
         self.expected_delta = expected_delta or infer_expected_timedelta(self.df.index)
         self.timezone = self.df.index.tz
         self.regime_col = regime_col
-        self.has_regime_col = regime_col in self.df.columns
+        self.has_regime_col = include_regime_labels and regime_col in self.df.columns
 
         feature_array = self.df[feature_cols].to_numpy(dtype=np.float32)
         raw_target_array = self.df[target_col].to_numpy(dtype=np.float32)
@@ -220,6 +224,37 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
             else np.zeros(len(self.df), dtype=np.int64)
         )
         self.timestamp_ns = self.df.index.asi8.astype(np.int64)
+        self.regime_posterior = None
+        self.regime_transition_matrix = None
+        self.regime_start_probability = None
+        self.has_regime_mask_weights = regime_posterior is not None
+        if regime_posterior is not None:
+            posterior = np.asarray(regime_posterior, dtype=np.float32)
+            if posterior.ndim != 2 or posterior.shape[0] != len(self.df) or posterior.shape[1] < 2:
+                raise ValueError(
+                    "regime_posterior must have shape [rows, K+1] and include night regime 0; "
+                    f"got {posterior.shape} for {len(self.df)} rows."
+                )
+            if regime_transition_matrix is None or regime_start_probability is None:
+                raise ValueError(
+                    "regime_transition_matrix and regime_start_probability are required with regime_posterior."
+                )
+            transition = np.asarray(regime_transition_matrix, dtype=np.float32)
+            start_probability = np.asarray(regime_start_probability, dtype=np.float32)
+            day_regime_count = posterior.shape[1] - 1
+            if transition.shape != (day_regime_count, day_regime_count):
+                raise ValueError(
+                    "regime_transition_matrix must have shape [K, K] for posterior shape [rows, K+1]; "
+                    f"got transition={transition.shape}, posterior={posterior.shape}."
+                )
+            if start_probability.shape != (day_regime_count,):
+                raise ValueError(
+                    "regime_start_probability must have shape [K] for posterior shape [rows, K+1]; "
+                    f"got start={start_probability.shape}, posterior={posterior.shape}."
+                )
+            self.regime_posterior = posterior
+            self.regime_transition_matrix = transition
+            self.regime_start_probability = self._normalize_probability_vector(start_probability)
 
         # Sliding windows are counted per continuous segment only, never across gaps.
         self.segment_starts, segment_ends = build_segment_boundaries(self.df.index, self.expected_delta)
@@ -237,6 +272,48 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
         if len(self.cumulative_windows) == 0:
             return 0
         return int(self.cumulative_windows[-1])
+
+    @staticmethod
+    def _normalize_probability_vector(values: np.ndarray) -> np.ndarray:
+        probabilities = np.asarray(values, dtype=np.float64).copy()
+        probabilities[~np.isfinite(probabilities)] = 0.0
+        probabilities = np.maximum(probabilities, 0.0)
+        total = float(probabilities.sum())
+        if total <= 0.0:
+            probabilities = np.full_like(probabilities, 1.0 / max(len(probabilities), 1), dtype=np.float64)
+        else:
+            probabilities /= total
+        return probabilities.astype(np.float32)
+
+    def _compute_regime_mask_weights(self, input_end: int, target_start: int, target_end: int) -> np.ndarray:
+        if self.regime_posterior is None or self.regime_transition_matrix is None or self.regime_start_probability is None:
+            raise RuntimeError("Regime mask weights requested without regime posterior metadata.")
+
+        posterior_at_input_end = self._normalize_probability_vector(self.regime_posterior[input_end])
+        day_state = (
+            self._normalize_probability_vector(posterior_at_input_end[1:])
+            if float(posterior_at_input_end[1:].sum()) > 0.0
+            else None
+        )
+        transition = self.regime_transition_matrix.astype(np.float64)
+        start_probability = self.regime_start_probability.astype(np.float64)
+        future_probabilities: list[np.ndarray] = []
+
+        for target_index in range(target_start, target_end):
+            full_probability = np.zeros_like(posterior_at_input_end, dtype=np.float64)
+            if self.day_night_label[target_index] != 1:
+                full_probability[0] = 1.0
+                day_state = None
+            else:
+                if day_state is None:
+                    day_state = start_probability.copy()
+                else:
+                    day_state = self._normalize_probability_vector(day_state @ transition).astype(np.float64)
+                full_probability[1:] = day_state
+            future_probabilities.append(full_probability)
+
+        weights = np.mean(np.stack(future_probabilities, axis=0), axis=0)
+        return self._normalize_probability_vector(weights)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         if idx < 0 or idx >= len(self):
@@ -270,6 +347,13 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
         if self.has_regime_col:
             sample["input_end_regime"] = torch.tensor(self.regime[encoder_end - 1], dtype=torch.long)
             sample["target_regime"] = torch.from_numpy(target_regime)
+        if self.has_regime_mask_weights:
+            regime_mask_weights = self._compute_regime_mask_weights(
+                input_end=encoder_end - 1,
+                target_start=encoder_end,
+                target_end=decoder_end,
+            )
+            sample["regime_mask_weights"] = torch.from_numpy(regime_mask_weights)
         return sample
 
     def summary(self) -> dict[str, int | float | str]:
@@ -300,5 +384,8 @@ class ContinuousSegmentTimeSeriesDataset(Dataset):
             summary["row_regime_counts"] = {
                 str(int(regime)): int(count) for regime, count in zip(unique, counts, strict=True)
             }
+        if self.has_regime_mask_weights and self.regime_posterior is not None:
+            summary["regime_probability_dim"] = int(self.regime_posterior.shape[1])
+            summary["regime_probability_source"] = "online_hmm_forward_filter"
 
         return summary

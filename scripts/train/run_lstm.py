@@ -603,6 +603,7 @@ def collect_predictions(
     target_day_batches: list[np.ndarray] = []
     input_end_regime_batches: list[np.ndarray] = []
     target_regime_batches: list[np.ndarray] = []
+    regime_mask_weight_batches: list[np.ndarray] = []
 
     progress = tqdm(
         loader,
@@ -630,6 +631,8 @@ def collect_predictions(
             input_end_regime_batches.append(batch["input_end_regime"].cpu().numpy().astype(np.int64))
         if "target_regime" in batch:
             target_regime_batches.append(batch["target_regime"].cpu().numpy().astype(np.int64))
+        if "regime_mask_weights" in batch:
+            regime_mask_weight_batches.append(batch["regime_mask_weights"].cpu().numpy().astype(np.float32))
 
     prediction_dict = {
         "y_pred": np.concatenate(pred_batches, axis=0),
@@ -643,6 +646,8 @@ def collect_predictions(
         prediction_dict["input_end_regime"] = np.concatenate(input_end_regime_batches, axis=0)
     if target_regime_batches:
         prediction_dict["target_regime"] = np.concatenate(target_regime_batches, axis=0)
+    if regime_mask_weight_batches:
+        prediction_dict["regime_mask_weights"] = np.concatenate(regime_mask_weight_batches, axis=0)
     return prediction_dict
 
 
@@ -670,6 +675,10 @@ def build_prediction_dataframe(
     }
     if "input_end_regime" in prediction_dict:
         frame_dict["input_end_regime"] = prediction_dict["input_end_regime"].astype(np.int64)
+    if "regime_mask_weights" in prediction_dict:
+        regime_weights = prediction_dict["regime_mask_weights"]
+        for regime_id in range(regime_weights.shape[1]):
+            frame_dict[f"regime_weight_{regime_id}"] = regime_weights[:, regime_id]
 
     for horizon in range(pred_len):
         horizon_name = horizon + 1

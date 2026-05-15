@@ -66,9 +66,8 @@ CAUSAL_GAMMA="${CAUSAL_GAMMA:-1.0}"
 CAUSAL_REWARD_STRENGTH="${CAUSAL_REWARD_STRENGTH:-max_abs_mci}"
 CAUSAL_STRENGTH_NORMALIZATION="${CAUSAL_STRENGTH_NORMALIZATION:-per_target_max}"
 REGIME_GRAPH_ROOT="${REGIME_GRAPH_ROOT:-}"
-REGIME_LABEL_DIR="${REGIME_LABEL_DIR:-}"
-REGIME_COL="${REGIME_COL:-regime}"
-REGIME_MASK_SELECTION="${REGIME_MASK_SELECTION:-input_end}"
+REGIME_MODEL_PATH="${REGIME_MODEL_PATH:-$(project_config_get paths.results_root)/regimes/gmm_hmm_daytime_k7/gmm_hmm_regime_model.pkl}"
+REGIME_MASK_STRATEGY="${REGIME_MASK_STRATEGY:-transition_weighted}"
 
 if [[ "${MODE}" != "train" && "${MODE}" != "export_tuned_best" ]]; then
   echo "Error: MODE must be one of: train, export_tuned_best" >&2
@@ -218,11 +217,8 @@ run_train_case() {
   cmd+=(--causal_strength_normalization "${CAUSAL_STRENGTH_NORMALIZATION}")
   if [[ -n "${REGIME_GRAPH_ROOT}" ]]; then
     cmd+=(--regime_graph_root "${REGIME_GRAPH_ROOT}")
-    cmd+=(--regime_col "${REGIME_COL}")
-    cmd+=(--regime_mask_selection "${REGIME_MASK_SELECTION}")
-  fi
-  if [[ -n "${REGIME_LABEL_DIR}" ]]; then
-    cmd+=(--regime_label_dir "${REGIME_LABEL_DIR}")
+    cmd+=(--regime_model_path "${REGIME_MODEL_PATH}")
+    cmd+=(--regime_mask_strategy "${REGIME_MASK_STRATEGY}")
   fi
 
   if [[ "$#" -gt 1 ]]; then
@@ -271,11 +267,8 @@ run_export_case() {
   )
   if [[ -n "${REGIME_GRAPH_ROOT}" ]]; then
     cmd+=(--regime_graph_root "${REGIME_GRAPH_ROOT}")
-    cmd+=(--regime_col "${REGIME_COL}")
-    cmd+=(--regime_mask_selection "${REGIME_MASK_SELECTION}")
-  fi
-  if [[ -n "${REGIME_LABEL_DIR}" ]]; then
-    cmd+=(--regime_label_dir "${REGIME_LABEL_DIR}")
+    cmd+=(--regime_model_path "${REGIME_MODEL_PATH}")
+    cmd+=(--regime_mask_strategy "${REGIME_MASK_STRATEGY}")
   fi
 
   if [[ -n "${TIME_COL}" ]]; then

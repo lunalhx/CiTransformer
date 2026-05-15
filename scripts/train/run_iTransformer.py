@@ -4,8 +4,10 @@ import argparse
 import json
 import math
 import os
+import pickle
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +53,28 @@ from utils.datasets import (
     fit_split_scalers,
     infer_expected_timedelta,
     load_split_dataframe,
+    resolve_split_dir,
 )
+
+
+@dataclass
+class RegimeModelArtifact:
+    path: Path
+    model: Any
+    scaler: Any
+    feature_columns: list[str]
+    day_column: str
+    start_probability: np.ndarray
+    transition_matrix: np.ndarray
+    daytime_regime_offset: int
+
+    @property
+    def daytime_regime_count(self) -> int:
+        return int(self.start_probability.shape[0])
+
+    @property
+    def total_regime_count(self) -> int:
+        return self.daytime_regime_count + self.daytime_regime_offset
 
 
 def parse_args() -> argparse.Namespace:
@@ -157,30 +180,28 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional root directory containing regime_*/global_causal_adjacency.csv. "
-            "When provided, a per-sample regime-specific soft attention bias is selected dynamically."
+            "When provided, per-sample regime masks are probability-weighted from online HMM state forecasts."
         ),
     )
     parser.add_argument(
-        "--regime_label_dir",
+        "--regime_model_path",
         type=str,
-        default=None,
+        default=str(
+            PROJECT_CONFIG.get_path("paths.results_root")
+            / "regimes"
+            / "gmm_hmm_daytime_k7"
+            / "gmm_hmm_regime_model.pkl"
+        ),
         help=(
-            "Optional directory containing train/validation/calibration/test_with_regime.csv. "
-            "Required for regime-aware dynamic masking unless --data_dir already points to labeled split files."
+            "Train-only GMM-HMM artifact used for online regime posterior filtering when --regime_graph_root is set."
         ),
     )
     parser.add_argument(
-        "--regime_col",
+        "--regime_mask_strategy",
         type=str,
-        default="regime",
-        help="Column containing integer regime labels for dynamic causal mask selection.",
-    )
-    parser.add_argument(
-        "--regime_mask_selection",
-        type=str,
-        default="input_end",
-        choices=["input_end"],
-        help="Which observed regime selects the dynamic mask. Only input_end is leakage-safe for the main experiment.",
+        default="transition_weighted",
+        choices=["transition_weighted"],
+        help="Regime dynamic mask strategy. Uses online HMM alpha_T and transition-weighted future regime probabilities.",
     )
 
     parser.add_argument("--epochs", type=int, default=30, help="Maximum training epochs.")
@@ -565,54 +586,158 @@ def resolve_path(path_value: str) -> Path:
     return resolve_project_path(path_value, PROJECT_ROOT)
 
 
-def resolve_regime_split_path(regime_label_dir: str, split_name: str) -> Path:
-    label_dir = resolve_path(regime_label_dir)
-    candidates = [
-        label_dir / f"{split_name}_with_regime.csv",
-        label_dir / "splits" / f"{split_name}_with_regime.csv",
-        label_dir / f"{split_name}.csv",
-        label_dir / "splits" / f"{split_name}.csv",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError(
-        f"Cannot find a regime-labeled {split_name} split under {label_dir}. "
-        "Expected split_with_regime.csv or split.csv, either directly or under splits/."
+def normalize_probability_vector(values: np.ndarray, fallback: np.ndarray | None = None) -> np.ndarray:
+    probabilities = np.asarray(values, dtype=np.float64).copy()
+    probabilities[~np.isfinite(probabilities)] = 0.0
+    probabilities = np.maximum(probabilities, 0.0)
+    total = float(probabilities.sum())
+    if total > 0.0:
+        return (probabilities / total).astype(np.float32)
+
+    if fallback is not None:
+        fallback_probabilities = np.asarray(fallback, dtype=np.float64).copy()
+        fallback_probabilities[~np.isfinite(fallback_probabilities)] = 0.0
+        fallback_probabilities = np.maximum(fallback_probabilities, 0.0)
+        fallback_total = float(fallback_probabilities.sum())
+        if fallback_total > 0.0:
+            return (fallback_probabilities / fallback_total).astype(np.float32)
+
+    return np.full_like(probabilities, 1.0 / max(len(probabilities), 1), dtype=np.float32)
+
+
+def probabilities_from_log_likelihood(log_likelihood: np.ndarray) -> np.ndarray:
+    log_values = np.asarray(log_likelihood, dtype=np.float64)
+    finite_mask = np.isfinite(log_values)
+    if not finite_mask.any():
+        return np.full(log_values.shape, 1.0 / max(log_values.size, 1), dtype=np.float32)
+    shifted = log_values - float(np.max(log_values[finite_mask]))
+    probabilities = np.exp(shifted)
+    probabilities[~finite_mask] = 0.0
+    return normalize_probability_vector(probabilities)
+
+
+def load_regime_model_artifact(regime_model_path: str | None) -> RegimeModelArtifact | None:
+    if regime_model_path is None:
+        return None
+
+    artifact_path = resolve_path(regime_model_path)
+    if not artifact_path.exists():
+        raise FileNotFoundError(f"Cannot find regime model artifact: {artifact_path}")
+
+    with artifact_path.open("rb") as fp:
+        artifact = pickle.load(fp)
+
+    model = artifact.get("model")
+    scaler = artifact.get("scaler")
+    feature_columns = list(artifact.get("feature_columns") or [])
+    if model is None or scaler is None or not feature_columns:
+        raise ValueError(
+            f"{artifact_path} must contain model, scaler, and feature_columns from train-only GMM-HMM discovery."
+        )
+    if not hasattr(model, "_compute_log_likelihood"):
+        raise TypeError("The loaded regime model must expose hmmlearn-style _compute_log_likelihood for online filtering.")
+
+    start_probability = normalize_probability_vector(np.asarray(model.startprob_, dtype=np.float64))
+    transition_matrix = np.asarray(model.transmat_, dtype=np.float64)
+    if transition_matrix.ndim != 2 or transition_matrix.shape[0] != transition_matrix.shape[1]:
+        raise ValueError(f"Regime transition matrix must be square, got {transition_matrix.shape}.")
+    if transition_matrix.shape[0] != start_probability.shape[0]:
+        raise ValueError(
+            "Regime start probability and transition matrix disagree: "
+            f"start={start_probability.shape}, transition={transition_matrix.shape}."
+        )
+    transition_matrix = np.vstack(
+        [
+            normalize_probability_vector(row, fallback=start_probability)
+            for row in transition_matrix
+        ]
+    ).astype(np.float32)
+
+    daytime_regime_offset = int(artifact.get("daytime_regime_offset", 1))
+    if daytime_regime_offset != 1:
+        raise ValueError(
+            f"Only daytime_regime_offset=1 is supported for regime mask weighting, got {daytime_regime_offset}."
+        )
+
+    return RegimeModelArtifact(
+        path=artifact_path,
+        model=model,
+        scaler=scaler,
+        feature_columns=feature_columns,
+        day_column=str(artifact.get("day_column", "day_night_label")),
+        start_probability=start_probability,
+        transition_matrix=transition_matrix,
+        daytime_regime_offset=daytime_regime_offset,
     )
+
+
+def compute_online_regime_posteriors(
+    df: pd.DataFrame,
+    regime_artifact: RegimeModelArtifact,
+    expected_delta: pd.Timedelta,
+) -> np.ndarray:
+    missing_columns = [column for column in regime_artifact.feature_columns if column not in df.columns]
+    if missing_columns:
+        raise KeyError(f"Split is missing GMM-HMM regime feature columns: {missing_columns}")
+
+    if regime_artifact.day_column in df.columns:
+        day_mask = pd.to_numeric(df[regime_artifact.day_column], errors="coerce").fillna(0).to_numpy(dtype=np.int64) == 1
+    else:
+        day_mask = np.ones(len(df), dtype=bool)
+
+    feature_values = df[regime_artifact.feature_columns].to_numpy(dtype=float)
+    scaled_values = regime_artifact.scaler.transform(feature_values)
+    # Emission likelihoods are row-local under the fitted HMM; only the alpha recursion below carries temporal state.
+    log_likelihood = regime_artifact.model._compute_log_likelihood(scaled_values)
+    if log_likelihood.shape != (len(df), regime_artifact.daytime_regime_count):
+        raise ValueError(
+            "GMM-HMM emission log-likelihood shape mismatch: "
+            f"got {log_likelihood.shape}, expected {(len(df), regime_artifact.daytime_regime_count)}."
+        )
+
+    posterior = np.zeros((len(df), regime_artifact.total_regime_count), dtype=np.float32)
+    day_alpha: np.ndarray | None = None
+    index = df.index
+
+    for row_index in range(len(df)):
+        has_gap = row_index == 0 or (index[row_index] - index[row_index - 1]) != expected_delta
+        if not day_mask[row_index]:
+            posterior[row_index, 0] = 1.0
+            day_alpha = None
+            continue
+
+        if day_alpha is None or has_gap or not day_mask[row_index - 1]:
+            prior = regime_artifact.start_probability
+        else:
+            prior = normalize_probability_vector(day_alpha @ regime_artifact.transition_matrix, fallback=regime_artifact.start_probability)
+
+        emission_probability = probabilities_from_log_likelihood(log_likelihood[row_index])
+        day_alpha = normalize_probability_vector(prior * emission_probability, fallback=prior)
+        posterior[row_index, 1:] = day_alpha
+
+    return posterior
 
 
 def prepare_itransformer_datasets(
     args: argparse.Namespace,
     include_test: bool = True,
+    regime_artifact: RegimeModelArtifact | None = None,
 ) -> tuple[dict[str, ContinuousSegmentTimeSeriesDataset], dict[str, pd.DataFrame], Any, pd.Timedelta]:
-    if getattr(args, "regime_label_dir", None) is None and getattr(args, "regime_graph_root", None) is None:
+    if regime_artifact is None:
         return prepare_datasets(args, include_test=include_test)
 
-    label_source = args.regime_label_dir or args.data_dir
+    split_dir = resolve_split_dir(args.data_dir)
     split_names = ["train", "validation", "calibration"]
     if include_test:
         split_names.append("test")
 
     raw_frames = {
         split_name: load_split_dataframe(
-            resolve_regime_split_path(label_source, split_name),
+            split_dir / f"{split_name}.csv",
             time_col=args.time_col,
         )
         for split_name in split_names
     }
-
-    if getattr(args, "regime_graph_root", None) is not None:
-        missing_regime = [
-            split_name
-            for split_name, frame in raw_frames.items()
-            if args.regime_col not in frame.columns
-        ]
-        if missing_regime:
-            raise KeyError(
-                f"Dynamic regime masking requires `{args.regime_col}` in every loaded split. "
-                f"Missing in: {missing_regime}. Use --regime_label_dir with *_with_regime.csv files."
-            )
 
     feature_cols = list(args.feature_cols)
     scalers = fit_split_scalers(raw_frames["train"], feature_cols, args.target_col)
@@ -621,6 +746,10 @@ def prepare_itransformer_datasets(
         if args.sampling_freq_minutes is not None
         else infer_expected_timedelta(raw_frames["train"].index)
     )
+    regime_posteriors = {
+        split_name: compute_online_regime_posteriors(frame, regime_artifact, expected_delta)
+        for split_name, frame in raw_frames.items()
+    }
 
     datasets: dict[str, ContinuousSegmentTimeSeriesDataset] = {}
     for split_name, frame in raw_frames.items():
@@ -633,7 +762,10 @@ def prepare_itransformer_datasets(
             feature_scaler=scalers.feature_scaler,
             target_scaler=scalers.target_scaler,
             expected_delta=expected_delta,
-            regime_col=args.regime_col,
+            include_regime_labels=False,
+            regime_posterior=regime_posteriors[split_name],
+            regime_transition_matrix=regime_artifact.transition_matrix,
+            regime_start_probability=regime_artifact.start_probability,
         )
     return datasets, raw_frames, scalers, expected_delta
 
@@ -648,12 +780,14 @@ def load_regime_attention_mask_bank(
     strength_normalization: str,
     d_model: int,
     n_heads: int,
-    regime_mask_selection: str,
+    regime_mask_strategy: str,
+    expected_regime_count: int | None = None,
+    regime_model_path: str | None = None,
 ) -> tuple[torch.Tensor | None, dict[str, Any] | None]:
     if regime_graph_root is None:
         return None, None
-    if regime_mask_selection != "input_end":
-        raise ValueError("Only --regime_mask_selection input_end is supported for leakage-safe dynamic masking.")
+    if regime_mask_strategy != "transition_weighted":
+        raise ValueError("Only --regime_mask_strategy transition_weighted is supported for dynamic regime masking.")
     if mode not in {"soft_bias", "causal_reward"}:
         raise ValueError("Regime-aware dynamic masking requires --causal_mask_mode soft_bias or causal_reward.")
     if mode == "soft_bias" and not math.isclose(float(beta), 1.0, rel_tol=0.0, abs_tol=1e-12):
@@ -683,6 +817,8 @@ def load_regime_attention_mask_bank(
 
     feature_count = len(feature_cols)
     max_regime = max(regime_dirs)
+    if expected_regime_count is not None:
+        max_regime = max(max_regime, int(expected_regime_count) - 1)
     mask_bank = np.zeros((max_regime + 1, feature_count, feature_count), dtype=np.float32)
     regime_metadata: dict[str, Any] = {}
     for regime_id in sorted(regime_dirs):
@@ -709,7 +845,11 @@ def load_regime_attention_mask_bank(
         raise FileNotFoundError(f"Cannot find any nonzero regime reward graphs under {graph_root}.")
 
     metadata = {
-        "mask_type": "regime_dynamic_causal_reward" if mode == "causal_reward" else "regime_dynamic_soft_bias",
+        "mask_type": (
+            "regime_transition_weighted_causal_reward"
+            if mode == "causal_reward"
+            else "regime_transition_weighted_soft_bias"
+        ),
         "mask_applied": True,
         "mask_mode": mode,
         "mask_beta": float(beta) if mode == "soft_bias" else None,
@@ -717,8 +857,16 @@ def load_regime_attention_mask_bank(
         "causal_reward_strength": reward_strength if mode == "causal_reward" else None,
         "causal_strength_normalization": strength_normalization if mode == "causal_reward" else None,
         "regime_graph_root": str(graph_root),
-        "regime_mask_selection": regime_mask_selection,
-        "selection_detail": "input_end_regime at encoder_end - 1; no target timestamp regime is used for gating",
+        "regime_model_path": str(resolve_path(regime_model_path)) if regime_model_path is not None else None,
+        "regime_mask_strategy": regime_mask_strategy,
+        "offline_full_split_regime_labels_used": False,
+        "regime_probability_source": "online_hmm_forward_filter",
+        "future_regime_distribution": "hmm_transition_matrix",
+        "selection_detail": (
+            "For each sample, alpha_T is computed from observations up to encoder_end - 1; "
+            "future pi_{T+h|T} is propagated with the train-fitted HMM transition matrix; "
+            "a horizon-average regime probability vector weights the mask bank."
+        ),
         "fallback_regime": 0,
         "fallback_mask": "all-zero additive attention bias, equivalent to no structural causal constraint",
         "loaded_regimes": loaded_regimes,
@@ -735,11 +883,11 @@ def load_regime_attention_mask_bank(
         ),
         "graph_semantics": (
             "Target-regime-conditioned PCMCI graphs are used as leakage-safe dynamic causal reward bias "
-            "selected by the last observed input regime."
+            "weighted by online HMM transition probabilities."
             if mode == "causal_reward"
             else (
                 "Target-regime-conditioned PCMCI graphs are used as leakage-safe dynamic soft attention bias "
-                "selected by the last observed input regime."
+                "weighted by online HMM transition probabilities."
             )
         ),
     }
@@ -753,17 +901,32 @@ def build_regime_model_kwargs_fn(
         return None
 
     def model_kwargs_fn(batch: dict[str, torch.Tensor], device: torch.device) -> dict[str, torch.Tensor]:
-        if "input_end_regime" not in batch:
+        if "regime_mask_weights" not in batch:
             raise KeyError(
-                "Dynamic regime masking requires `input_end_regime` in each batch. "
-                "Load *_with_regime.csv files via --regime_label_dir."
+                "Dynamic regime masking requires `regime_mask_weights` in each batch. "
+                "Load a train-only regime model via --regime_model_path."
             )
-        regime_ids = batch["input_end_regime"].to(device=device, dtype=torch.long)
+        weights = batch["regime_mask_weights"].to(device=device, dtype=torch.float32)
+        if weights.ndim != 2:
+            raise ValueError(f"regime_mask_weights must have shape [batch, regimes], got {tuple(weights.shape)}.")
         bank = regime_mask_bank.to(device=device)
-        valid_regime = (regime_ids >= 0) & (regime_ids < bank.size(0))
-        safe_regime_ids = torch.where(valid_regime, regime_ids, torch.zeros_like(regime_ids))
+        if weights.size(1) > bank.size(0):
+            pad_count = weights.size(1) - bank.size(0)
+            padding = torch.zeros(
+                pad_count,
+                bank.size(1),
+                bank.size(2),
+                device=device,
+                dtype=bank.dtype,
+            )
+            bank = torch.cat([bank, padding], dim=0)
+        elif weights.size(1) < bank.size(0):
+            bank = bank[: weights.size(1)]
+        weights = torch.clamp(weights, min=0.0)
+        weights = weights / torch.clamp(weights.sum(dim=1, keepdim=True), min=1e-12)
+        weighted_mask = torch.einsum("br,rnm->bnm", weights, bank)
         # Shape [B, 1, N, N] broadcasts over attention heads [B, H, N, N].
-        return {"mask": bank[safe_regime_ids].unsqueeze(1)}
+        return {"mask": weighted_mask.unsqueeze(1)}
 
     return model_kwargs_fn
 
@@ -796,21 +959,28 @@ def summarize_regime_mask_usage(
     prediction_dict: dict[str, np.ndarray],
     regime_mask_metadata: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    if regime_mask_metadata is None or "input_end_regime" not in prediction_dict:
+    if regime_mask_metadata is None or "regime_mask_weights" not in prediction_dict:
         return None
 
-    input_end_regime = prediction_dict["input_end_regime"].astype(np.int64)
+    weights = np.asarray(prediction_dict["regime_mask_weights"], dtype=np.float64)
+    if weights.ndim != 2:
+        raise ValueError(f"regime_mask_weights must have shape [samples, regimes], got {weights.shape}.")
     loaded_regimes = {int(value) for value in regime_mask_metadata.get("loaded_regimes", [])}
-    fallback_mask = np.array([int(value) not in loaded_regimes for value in input_end_regime], dtype=bool)
+    loaded_mask = np.array([regime_id in loaded_regimes for regime_id in range(weights.shape[1])], dtype=bool)
+    fallback_weight = weights[:, ~loaded_mask].sum(axis=1) if weights.size else np.array([], dtype=np.float64)
+    dominant_regime = weights.argmax(axis=1).astype(np.int64) if weights.size else np.array([], dtype=np.int64)
     usage = {
-        "sample_count": int(input_end_regime.size),
-        "input_end_regime_counts": value_counts_dict(input_end_regime),
-        "fallback_count": int(fallback_mask.sum()),
-        "fallback_ratio": float(fallback_mask.mean()) if input_end_regime.size else 0.0,
-        "fallback_definition": "regime not in loaded_regimes, including regime 0 night, maps to no-mask bias",
+        "sample_count": int(weights.shape[0]),
+        "regime_mask_strategy": regime_mask_metadata.get("regime_mask_strategy"),
+        "offline_full_split_regime_labels_used": False,
+        "mean_regime_mask_weights": {
+            str(regime_id): float(value)
+            for regime_id, value in enumerate(weights.mean(axis=0).tolist() if weights.size else [])
+        },
+        "dominant_regime_counts": value_counts_dict(dominant_regime),
+        "fallback_weight_mean": float(fallback_weight.mean()) if fallback_weight.size else 0.0,
+        "fallback_definition": "probability mass on regimes without loaded graphs, including regime 0 night, maps to no-mask bias",
     }
-    if "target_regime" in prediction_dict:
-        usage["target_regime_counts"] = value_counts_dict(prediction_dict["target_regime"].reshape(-1))
     return usage
 
 
@@ -835,14 +1005,12 @@ def build_eval_args_from_checkpoint(cli_args: argparse.Namespace, checkpoint_arg
         eval_args.regime_graph_root = cli_args.regime_graph_root
     elif not hasattr(eval_args, "regime_graph_root"):
         eval_args.regime_graph_root = None
-    if cli_args.regime_label_dir is not None:
-        eval_args.regime_label_dir = cli_args.regime_label_dir
-    elif not hasattr(eval_args, "regime_label_dir"):
-        eval_args.regime_label_dir = None
-    if not hasattr(eval_args, "regime_col"):
-        eval_args.regime_col = cli_args.regime_col
-    if not hasattr(eval_args, "regime_mask_selection"):
-        eval_args.regime_mask_selection = cli_args.regime_mask_selection
+    if cli_args.regime_model_path is not None:
+        eval_args.regime_model_path = cli_args.regime_model_path
+    elif not hasattr(eval_args, "regime_model_path"):
+        eval_args.regime_model_path = None
+    if not hasattr(eval_args, "regime_mask_strategy"):
+        eval_args.regime_mask_strategy = cli_args.regime_mask_strategy
     if not hasattr(eval_args, "causal_mask_mode"):
         eval_args.causal_mask_mode = cli_args.causal_mask_mode
     if not hasattr(eval_args, "causal_mask_beta"):
@@ -994,9 +1162,9 @@ def evaluate_and_export(
             "iTransformer backbone with Active_Pow extracted from the multivariate forecast output"
             + (
                 (
-                    " and target-regime-conditioned PCMCI causal edge reward selected by input_end_regime."
+                    " and transition-weighted target-regime-conditioned PCMCI causal edge reward from online HMM regime probabilities."
                     if regime_mask_metadata.get("mask_mode") == "causal_reward"
-                    else " and target-regime-conditioned PCMCI soft attention bias selected by input_end_regime."
+                    else " and transition-weighted target-regime-conditioned PCMCI soft attention bias from online HMM regime probabilities."
                 )
                 if regime_mask_metadata is not None
                 else (
@@ -1046,11 +1214,12 @@ def evaluate_and_export(
         ),
         "causal_mask": causal_mask_metadata,
         "regime_causal_mask": regime_mask_metadata,
-        "regime_mask_selection": (
-            getattr(args, "regime_mask_selection", None)
+        "regime_mask_strategy": (
+            getattr(args, "regime_mask_strategy", None)
             if regime_mask_metadata is not None
             else None
         ),
+        "offline_full_split_regime_labels_used": False if regime_mask_metadata is not None else None,
         "regime_mask_usage": regime_mask_usage,
         "best_epoch": best_epoch,
         "best_validation_loss": best_val_loss,
@@ -1089,7 +1258,7 @@ def evaluate_and_export(
         log(f"- causal mask: {causal_mask_metadata['causal_adjacency_path']}")
     if regime_mask_metadata is not None:
         log(f"- regime mask root: {regime_mask_metadata['regime_graph_root']}")
-        log(f"- regime mask selection: {regime_mask_metadata['regime_mask_selection']}")
+        log(f"- regime mask strategy: {regime_mask_metadata['regime_mask_strategy']}")
 
     all_metrics = reported_metrics["all_timestamps"]
     daytime_metrics = reported_metrics["daytime_only"]
@@ -1126,6 +1295,8 @@ def main() -> None:
         raise ValueError("--tuning_only cannot be combined with --eval_checkpoint_path.")
     if args.regime_graph_root is not None and args.causal_graph_dir is not None:
         raise ValueError("--regime_graph_root and --causal_graph_dir are mutually exclusive.")
+    if args.regime_graph_root is not None and args.regime_model_path is None:
+        raise ValueError("--regime_model_path is required when --regime_graph_root is set.")
 
     if args.eval_checkpoint_path is not None:
         checkpoint_path = resolve_path(args.eval_checkpoint_path)
@@ -1141,6 +1312,11 @@ def main() -> None:
         results_dir.mkdir(parents=True, exist_ok=True)
         if args.regime_graph_root is not None and args.causal_graph_dir is not None:
             raise ValueError("--regime_graph_root and --causal_graph_dir are mutually exclusive.")
+        regime_artifact = (
+            load_regime_model_artifact(getattr(args, "regime_model_path", None))
+            if getattr(args, "regime_graph_root", None) is not None
+            else None
+        )
         regime_mask_bank, regime_mask_metadata = load_regime_attention_mask_bank(
             getattr(args, "regime_graph_root", None),
             list(args.feature_cols),
@@ -1151,14 +1327,20 @@ def main() -> None:
             strength_normalization=str(getattr(args, "causal_strength_normalization", "per_target_max")),
             d_model=int(getattr(args, "d_model", 0)),
             n_heads=int(getattr(args, "n_heads", 0)),
-            regime_mask_selection=getattr(args, "regime_mask_selection", "input_end"),
+            regime_mask_strategy=getattr(args, "regime_mask_strategy", "transition_weighted"),
+            expected_regime_count=regime_artifact.total_regime_count if regime_artifact is not None else None,
+            regime_model_path=getattr(args, "regime_model_path", None),
         )
         if regime_mask_bank is not None:
             regime_mask_bank = regime_mask_bank.to(device=device)
         model_kwargs_fn = build_regime_model_kwargs_fn(regime_mask_bank)
 
         include_test = args.report_split == "test"
-        datasets, raw_frames, scalers, expected_delta = prepare_itransformer_datasets(args, include_test=include_test)
+        datasets, raw_frames, scalers, expected_delta = prepare_itransformer_datasets(
+            args,
+            include_test=include_test,
+            regime_artifact=regime_artifact,
+        )
         print_dataset_summaries(datasets)
 
         if len(datasets["validation"]) == 0:
@@ -1199,6 +1381,11 @@ def main() -> None:
     checkpoint_path = resolve_path(args.checkpoint_path)
     results_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    regime_artifact = (
+        load_regime_model_artifact(getattr(args, "regime_model_path", None))
+        if getattr(args, "regime_graph_root", None) is not None
+        else None
+    )
     regime_mask_bank, regime_mask_metadata = load_regime_attention_mask_bank(
         getattr(args, "regime_graph_root", None),
         list(args.feature_cols),
@@ -1209,13 +1396,19 @@ def main() -> None:
         strength_normalization=str(getattr(args, "causal_strength_normalization", "per_target_max")),
         d_model=int(getattr(args, "d_model", 0)),
         n_heads=int(getattr(args, "n_heads", 0)),
-        regime_mask_selection=getattr(args, "regime_mask_selection", "input_end"),
+        regime_mask_strategy=getattr(args, "regime_mask_strategy", "transition_weighted"),
+        expected_regime_count=regime_artifact.total_regime_count if regime_artifact is not None else None,
+        regime_model_path=getattr(args, "regime_model_path", None),
     )
     if regime_mask_bank is not None:
         regime_mask_bank = regime_mask_bank.to(device=device)
     model_kwargs_fn = build_regime_model_kwargs_fn(regime_mask_bank)
 
-    datasets, raw_frames, scalers, expected_delta = prepare_itransformer_datasets(args, include_test=not args.tuning_only)
+    datasets, raw_frames, scalers, expected_delta = prepare_itransformer_datasets(
+        args,
+        include_test=not args.tuning_only,
+        regime_artifact=regime_artifact,
+    )
     print_dataset_summaries(datasets)
 
     if len(datasets["train"]) == 0:

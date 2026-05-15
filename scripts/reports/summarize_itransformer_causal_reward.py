@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
         "--baseline_dynamic_soft_root",
         type=str,
         default=None,
-        help="Dynamic regime soft_bias baseline root.",
+        help="Transition-weighted dynamic regime soft_bias baseline root.",
     )
     parser.add_argument(
         "--output_dir",
@@ -118,7 +118,7 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     causal_reward_root = (
         resolve_path(args.causal_reward_root)
         if args.causal_reward_root
-        else results_root / "itransformer_causal_reward"
+        else results_root / "itransformer_transition_weighted_causal_reward"
     )
     baseline_none_root = (
         resolve_path(args.baseline_none_root)
@@ -133,7 +133,7 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     baseline_dynamic_soft_root = (
         resolve_path(args.baseline_dynamic_soft_root)
         if args.baseline_dynamic_soft_root
-        else results_root / "itransformer_regime_dynamic_pcmci_k7"
+        else results_root / "itransformer_regime_transition_weighted_pcmci_k7"
     )
 
     rows: list[dict[str, Any]] = []
@@ -160,7 +160,7 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
             if soft_rmse is None:
                 notes.append("missing_soft_beta1_baseline")
             if dynamic_rmse is None:
-                notes.append("missing_dynamic_soft_baseline")
+                notes.append("missing_transition_weighted_soft_baseline")
 
             rows.append(
                 {
@@ -170,7 +170,7 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                     "test_daytime_rmse": test_rmse,
                     "delta_vs_none": delta(validation_rmse, none_rmse),
                     "delta_vs_soft_beta1": delta(validation_rmse, soft_rmse),
-                    "delta_vs_dynamic_soft": delta(validation_rmse, dynamic_rmse),
+                    "delta_vs_transition_weighted_soft": delta(validation_rmse, dynamic_rmse),
                     "best_epoch": payload.get("best_epoch") if payload else None,
                     "reward_max": max_reward_from_payload(payload),
                     "notes": ";".join(notes),
@@ -196,7 +196,7 @@ def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
         "test_daytime_rmse",
         "delta_vs_none",
         "delta_vs_soft_beta1",
-        "delta_vs_dynamic_soft",
+        "delta_vs_transition_weighted_soft",
         "best_epoch",
         "reward_max",
         "notes",
@@ -219,7 +219,7 @@ def write_markdown(rows: list[dict[str, Any]], output_path: Path) -> None:
         "",
         "Deltas are validation daytime RMSE differences; negative values favor causal reward.",
         "",
-        "| pred_len | gamma | val daytime RMSE | test daytime RMSE | delta vs none | delta vs soft beta=1 | delta vs dynamic soft | best epoch | reward max | notes |",
+        "| pred_len | gamma | val daytime RMSE | test daytime RMSE | delta vs none | delta vs soft beta=1 | delta vs transition-weighted soft | best epoch | reward max | notes |",
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in rows:
@@ -231,7 +231,7 @@ def write_markdown(rows: list[dict[str, Any]], output_path: Path) -> None:
                 test=format_float(row["test_daytime_rmse"]),
                 none=format_float(row["delta_vs_none"]),
                 soft=format_float(row["delta_vs_soft_beta1"]),
-                dynamic=format_float(row["delta_vs_dynamic_soft"]),
+                dynamic=format_float(row["delta_vs_transition_weighted_soft"]),
                 epoch="" if row["best_epoch"] is None else row["best_epoch"],
                 reward=format_float(row["reward_max"]),
                 notes=row["notes"],
@@ -256,7 +256,7 @@ def main() -> None:
     causal_reward_root = (
         resolve_path(args.causal_reward_root)
         if args.causal_reward_root
-        else resolve_path(args.results_root) / "itransformer_causal_reward"
+        else resolve_path(args.results_root) / "itransformer_transition_weighted_causal_reward"
     )
     output_dir = resolve_path(args.output_dir) if args.output_dir else causal_reward_root / "summary"
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -24,10 +24,10 @@ DATA_DIR="${DATA_DIR:-$(project_config_get paths.data_dir)}"
 RESULTS_ROOT="${RESULTS_ROOT:-$(project_config_get paths.results_root)}"
 CHECKPOINTS_ROOT="${CHECKPOINTS_ROOT:-$(project_config_get paths.checkpoints_root)}"
 
-REGIME_LABEL_DIR="${REGIME_LABEL_DIR:-${RESULTS_ROOT}/regimes/gmm_hmm_daytime_k7}"
+REGIME_MODEL_PATH="${REGIME_MODEL_PATH:-${RESULTS_ROOT}/regimes/gmm_hmm_daytime_k7/gmm_hmm_regime_model.pkl}"
 REGIME_GRAPH_ROOT="${REGIME_GRAPH_ROOT:-${RESULTS_ROOT}/causal_graphs/regime_target_pcmci_k7}"
-RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-${RESULTS_ROOT}/itransformer_causal_reward}"
-CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-${CHECKPOINTS_ROOT}/itransformer_causal_reward}"
+RESULTS_BASE_DIR="${RESULTS_BASE_DIR:-${RESULTS_ROOT}/itransformer_transition_weighted_causal_reward}"
+CHECKPOINT_BASE_DIR="${CHECKPOINT_BASE_DIR:-${CHECKPOINTS_ROOT}/itransformer_transition_weighted_causal_reward}"
 
 PRED_LENS="${PRED_LENS:-12 24 48}"
 GAMMAS="${GAMMAS:-0.1 0.25 0.5 1.0 2.0}"
@@ -114,8 +114,8 @@ run_case() {
     --causal_reward_strength max_abs_mci
     --causal_strength_normalization per_target_max
     --regime_graph_root "${REGIME_GRAPH_ROOT}"
-    --regime_label_dir "${REGIME_LABEL_DIR}"
-    --regime_mask_selection input_end
+    --regime_model_path "${REGIME_MODEL_PATH}"
+    --regime_mask_strategy transition_weighted
   )
 
   if [[ "${TUNING_ONLY}" == "1" ]]; then
