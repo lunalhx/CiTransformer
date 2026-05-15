@@ -60,14 +60,18 @@ MAX_TRAIN_BATCHES="${MAX_TRAIN_BATCHES:-}"
 MAX_EVAL_BATCHES="${MAX_EVAL_BATCHES:-}"
 DISABLE_NORM="${DISABLE_NORM:-0}"
 OUTPUT_ATTENTION="${OUTPUT_ATTENTION:-0}"
-CAUSAL_MASK_MODE="${CAUSAL_MASK_MODE:-hard}"
+REGIME_GRAPH_ROOT="${REGIME_GRAPH_ROOT:-}"
+REGIME_MODEL_PATH="${REGIME_MODEL_PATH:-$(project_config_get paths.results_root)/regimes/gmm_hmm_daytime_k7/gmm_hmm_regime_model.pkl}"
+REGIME_MASK_STRATEGY="${REGIME_MASK_STRATEGY:-transition_weighted}"
+if [[ -n "${REGIME_GRAPH_ROOT}" && -z "${CAUSAL_MASK_MODE+x}" ]]; then
+  CAUSAL_MASK_MODE="causal_reward"
+else
+  CAUSAL_MASK_MODE="${CAUSAL_MASK_MODE:-hard}"
+fi
 CAUSAL_MASK_BETA="${CAUSAL_MASK_BETA:-1.0}"
 CAUSAL_GAMMA="${CAUSAL_GAMMA:-1.0}"
 CAUSAL_REWARD_STRENGTH="${CAUSAL_REWARD_STRENGTH:-max_abs_mci}"
 CAUSAL_STRENGTH_NORMALIZATION="${CAUSAL_STRENGTH_NORMALIZATION:-per_target_max}"
-REGIME_GRAPH_ROOT="${REGIME_GRAPH_ROOT:-}"
-REGIME_MODEL_PATH="${REGIME_MODEL_PATH:-$(project_config_get paths.results_root)/regimes/gmm_hmm_daytime_k7/gmm_hmm_regime_model.pkl}"
-REGIME_MASK_STRATEGY="${REGIME_MASK_STRATEGY:-transition_weighted}"
 
 if [[ "${MODE}" != "train" && "${MODE}" != "export_tuned_best" ]]; then
   echo "Error: MODE must be one of: train, export_tuned_best" >&2

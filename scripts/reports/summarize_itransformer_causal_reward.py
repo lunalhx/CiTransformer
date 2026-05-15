@@ -43,12 +43,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline_none_root", type=str, default=None, help="Matched no-mask baseline root.")
     parser.add_argument("--baseline_soft_beta1_root", type=str, default=None, help="soft_bias beta=1 baseline root.")
     parser.add_argument(
-        "--baseline_dynamic_soft_root",
-        type=str,
-        default=None,
-        help="Transition-weighted dynamic regime soft_bias baseline root.",
-    )
-    parser.add_argument(
         "--output_dir",
         type=str,
         default=None,
@@ -130,20 +124,12 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         if args.baseline_soft_beta1_root
         else results_root / "itransformer_mask_calibration" / "soft_bias_beta_1"
     )
-    baseline_dynamic_soft_root = (
-        resolve_path(args.baseline_dynamic_soft_root)
-        if args.baseline_dynamic_soft_root
-        else results_root / "itransformer_regime_transition_weighted_pcmci_k7"
-    )
-
     rows: list[dict[str, Any]] = []
     for pred_len in args.pred_lens:
         none_payload = load_json(baseline_none_root / f"pred_len_{pred_len}" / "metrics.json")
         soft_payload = load_json(baseline_soft_beta1_root / f"pred_len_{pred_len}" / "metrics.json")
-        dynamic_payload = load_json(baseline_dynamic_soft_root / f"pred_len_{pred_len}" / "metrics.json")
         none_rmse = daytime_rmse(none_payload, "validation")
         soft_rmse = daytime_rmse(soft_payload, "validation")
-        dynamic_rmse = daytime_rmse(dynamic_payload, "validation")
 
         for gamma in args.gammas:
             metrics_path = causal_reward_root / gamma_dir_name(gamma) / f"pred_len_{pred_len}" / "metrics.json"
@@ -159,8 +145,6 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 notes.append("missing_none_baseline")
             if soft_rmse is None:
                 notes.append("missing_soft_beta1_baseline")
-            if dynamic_rmse is None:
-                notes.append("missing_transition_weighted_soft_baseline")
 
             rows.append(
                 {
@@ -170,7 +154,6 @@ def build_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                     "test_daytime_rmse": test_rmse,
                     "delta_vs_none": delta(validation_rmse, none_rmse),
                     "delta_vs_soft_beta1": delta(validation_rmse, soft_rmse),
-                    "delta_vs_transition_weighted_soft": delta(validation_rmse, dynamic_rmse),
                     "best_epoch": payload.get("best_epoch") if payload else None,
                     "reward_max": max_reward_from_payload(payload),
                     "notes": ";".join(notes),
@@ -196,7 +179,6 @@ def write_csv(rows: list[dict[str, Any]], output_path: Path) -> None:
         "test_daytime_rmse",
         "delta_vs_none",
         "delta_vs_soft_beta1",
-        "delta_vs_transition_weighted_soft",
         "best_epoch",
         "reward_max",
         "notes",
@@ -219,19 +201,18 @@ def write_markdown(rows: list[dict[str, Any]], output_path: Path) -> None:
         "",
         "Deltas are validation daytime RMSE differences; negative values favor causal reward.",
         "",
-        "| pred_len | gamma | val daytime RMSE | test daytime RMSE | delta vs none | delta vs soft beta=1 | delta vs transition-weighted soft | best epoch | reward max | notes |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| pred_len | gamma | val daytime RMSE | test daytime RMSE | delta vs none | delta vs soft beta=1 | best epoch | reward max | notes |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in rows:
         lines.append(
-            "| {pred_len} | {gamma:g} | {val} | {test} | {none} | {soft} | {dynamic} | {epoch} | {reward} | {notes} |".format(
+            "| {pred_len} | {gamma:g} | {val} | {test} | {none} | {soft} | {epoch} | {reward} | {notes} |".format(
                 pred_len=row["pred_len"],
                 gamma=row["gamma"],
                 val=format_float(row["validation_daytime_rmse"]),
                 test=format_float(row["test_daytime_rmse"]),
                 none=format_float(row["delta_vs_none"]),
                 soft=format_float(row["delta_vs_soft_beta1"]),
-                dynamic=format_float(row["delta_vs_transition_weighted_soft"]),
                 epoch="" if row["best_epoch"] is None else row["best_epoch"],
                 reward=format_float(row["reward_max"]),
                 notes=row["notes"],
