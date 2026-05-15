@@ -38,6 +38,7 @@ from scripts.train.run_lstm import (
     evaluate_prediction_arrays,
     format_metric_for_console,
     get_device,
+    get_learning_rate,
     log,
     prepare_datasets,
     print_dataset_summaries,
@@ -211,6 +212,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grad_clip", type=float, default=1.0, help="Gradient clipping norm. Set <=0 to disable.")
     parser.add_argument("--patience", type=int, default=8, help="Early stopping patience.")
     parser.add_argument("--min_delta", type=float, default=1e-5, help="Minimum validation loss improvement.")
+    parser.add_argument(
+        "--lr_scheduler",
+        type=str,
+        default="plateau",
+        choices=["plateau", "none"],
+        help="Learning-rate scheduler. Use 'none' to keep a fixed learning rate.",
+    )
+    parser.add_argument(
+        "--lr_plateau_factor",
+        type=float,
+        default=0.5,
+        help="Factor for ReduceLROnPlateau when validation loss plateaus.",
+    )
+    parser.add_argument(
+        "--lr_plateau_patience",
+        type=int,
+        default=2,
+        help="Number of stagnant validation epochs before reducing learning rate.",
+    )
+    parser.add_argument(
+        "--lr_plateau_min_lr",
+        type=float,
+        default=1e-6,
+        help="Minimum learning rate for ReduceLROnPlateau.",
+    )
+    parser.add_argument(
+        "--lr_plateau_threshold",
+        type=float,
+        default=None,
+        help="Absolute validation-loss improvement threshold for ReduceLROnPlateau. Defaults to --min_delta.",
+    )
     parser.add_argument(
         "--num_workers",
         type=int,
@@ -1042,11 +1074,14 @@ def evaluate_and_export(
     checkpoint_path: Path,
     best_epoch: int,
     best_val_loss: float | None,
-    history: list[dict[str, float | int]],
+    history: list[dict[str, Any]],
     model_kwargs_fn: Any = None,
     regime_mask_metadata: dict[str, Any] | None = None,
 ) -> None:
     target_feature_index = get_target_feature_index(list(args.feature_cols), args.target_col)
+    lr_plateau_threshold = getattr(args, "lr_plateau_threshold", None)
+    if lr_plateau_threshold is None:
+        lr_plateau_threshold = getattr(args, "min_delta", 0.0)
     if regime_mask_metadata is None:
         _, causal_mask_metadata = load_causal_attention_mask(
             getattr(args, "causal_graph_dir", None),
@@ -1223,6 +1258,11 @@ def evaluate_and_export(
         "regime_mask_usage": regime_mask_usage,
         "best_epoch": best_epoch,
         "best_validation_loss": best_val_loss,
+        "lr_scheduler": getattr(args, "lr_scheduler", "none"),
+        "lr_plateau_factor": float(getattr(args, "lr_plateau_factor", 0.5)),
+        "lr_plateau_patience": int(getattr(args, "lr_plateau_patience", 2)),
+        "lr_plateau_min_lr": float(getattr(args, "lr_plateau_min_lr", 1e-6)),
+        "lr_plateau_threshold": float(lr_plateau_threshold),
         "expected_delta_minutes": float(expected_delta / pd.Timedelta(minutes=1)),
         "dataset_summary": {split_name: dataset.summary() for split_name, dataset in datasets.items()},
         "raw_split_rows": {split_name: int(len(df)) for split_name, df in raw_frames.items()},
@@ -1428,9 +1468,23 @@ def main() -> None:
         lr=args.learning_rate,
         weight_decay=args.weight_decay,
     )
+    lr_plateau_threshold = args.lr_plateau_threshold if args.lr_plateau_threshold is not None else args.min_delta
+    scheduler = (
+        torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=args.lr_plateau_factor,
+            patience=args.lr_plateau_patience,
+            threshold=lr_plateau_threshold,
+            threshold_mode="abs",
+            min_lr=args.lr_plateau_min_lr,
+        )
+        if args.lr_scheduler == "plateau"
+        else None
+    )
     early_stopping = EarlyStopping(patience=args.patience, min_delta=args.min_delta)
 
-    history: list[dict[str, float | int]] = []
+    history: list[dict[str, Any]] = []
     best_val_loss = math.inf
     best_epoch = 0
 
@@ -1464,15 +1518,6 @@ def main() -> None:
             model_kwargs_fn=model_kwargs_fn,
         )
 
-        history.append(
-            {
-                "epoch": epoch,
-                "train_loss": float(train_loss),
-                "validation_loss": float(val_loss),
-            }
-        )
-        log(f"Epoch {epoch:03d} | train_loss={train_loss:.6f} | val_loss={val_loss:.6f}")
-
         if val_loss < best_val_loss - args.min_delta:
             best_val_loss = float(val_loss)
             best_epoch = epoch
@@ -1489,7 +1534,33 @@ def main() -> None:
                 feature_cols=list(args.feature_cols),
             )
 
-        if early_stopping.step(val_loss):
+        previous_lr = get_learning_rate(optimizer)
+        if scheduler is not None:
+            scheduler.step(val_loss)
+        current_lr = get_learning_rate(optimizer)
+        lr_reduced = bool(current_lr < previous_lr)
+
+        should_stop = early_stopping.step(val_loss)
+        history.append(
+            {
+                "epoch": epoch,
+                "train_loss": float(train_loss),
+                "validation_loss": float(val_loss),
+                "best_epoch": int(best_epoch),
+                "best_validation_loss": float(best_val_loss),
+                "patience_counter": int(early_stopping.counter),
+                "learning_rate": float(current_lr),
+                "lr_reduced": lr_reduced,
+            }
+        )
+        log(
+            f"Epoch {epoch:03d} | train_loss={train_loss:.6f} | val_loss={val_loss:.6f} "
+            f"| best_epoch={best_epoch} | best_val_loss={best_val_loss:.6f} "
+            f"| patience_counter={early_stopping.counter} | lr={current_lr:.6g} "
+            f"| lr_reduced={lr_reduced}"
+        )
+
+        if should_stop:
             log(f"Early stopping triggered at epoch {epoch}.")
             break
 
