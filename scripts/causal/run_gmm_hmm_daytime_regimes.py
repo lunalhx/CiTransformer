@@ -555,10 +555,17 @@ def write_markdown_report(
     doc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def resolve_output_path(path_value: str | Path) -> Path:
+    path = Path(path_value).expanduser()
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
 def main() -> None:
     args = parse_args()
     np.random.seed(args.seed)
-    output_dir = Path(args.output_dir)
+    output_dir = resolve_output_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     split_dir = resolve_split_dir(args.data_dir)
@@ -687,7 +694,7 @@ def main() -> None:
         json.dump(config, fp, ensure_ascii=False, indent=2)
 
     write_markdown_report(
-        doc_path=Path(args.doc_path),
+        doc_path=resolve_output_path(args.doc_path),
         output_dir=output_dir,
         selected_row=selected_row,
         summary=summary,
